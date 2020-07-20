@@ -5,37 +5,42 @@ from bisect import bisect
 PRECISION = 3
 IDENTITY = lambda w: w
 def wireplane_overlap(wire_plane, tiling):
-    """offset of a line is perp distance to origin = e2 dot {pt on line} """
-
+    """calculates the overlap (area) b/t every unit square and the wire regions of wire_plane
+    assumes each square overlaps with at most 2 regions
+    offset of a (boundary) line is perp distance to origin = e2 dot {pt on line} """
     angle, bound_offsets, w_map = wire_plane 
     min_x, max_x, min_y, max_y = tiling 
     num_wires = len(bound_offsets) - 1
+    print("computing overlaps for wire plane of angle: {}, num wires: {}".format(angle, num_wires))
 
-    assert -90 < angle and angle < 90
-    cos = np.cos(angle*np.pi/180)
-    sin = np.sin(angle*np.pi/180)
+    cos = round(np.cos(np.radians(angle)), 2*PRECISION)
+    sin = round(np.sin(np.radians(angle)), 2*PRECISION)
     e2 = np.array([cos, sin])
-    x_offsets = bound_offsets/cos
-    if angle != 0: 
+    if cos != 0: 
+        x_offsets = bound_offsets/cos
+    if sin != 0: 
         y_offsets = bound_offsets/sin
 
     crossings = np.full((max_x-min_x, max_y-min_y, 4), None) #up, down, l, r
-    hop_x_grid = -sin/cos
-    for y in range(min_y, max_y+1):
-        for w, x_offset in enumerate(x_offsets):
-            x_crossing = x_offset + y*hop_x_grid 
-            x = math.floor(x_crossing)
-            if x < min_x or x >= max_x:
-                continue
-            x_rel = x_crossing - x
-            assert x_rel != 0, "ill-posed corner intersection, try perturbing offset"
-            if y > min_y:
-                assert crossings[x,y-1,0] is None, "more than 2 associated wires? try increase pitch" 
-                crossings[x, y-1, 0] = (x_rel, w) 
-            if y < max_y:
-                assert crossings[x,y,1] is None, "more than 2 associated wires? try increase pitch"
-                crossings[x, y, 1] = (x_rel, w)
-    if angle != 0:
+    if cos != 0:
+        hop_x_grid = -sin/cos
+        for y in range(min_y, max_y+1):
+            for w, x_offset in enumerate(x_offsets):
+                x_crossing = x_offset + y*hop_x_grid 
+                x = math.floor(x_crossing)
+                if x < min_x or x >= max_x:
+                    continue
+                x_rel = x_crossing - x
+                if x_rel == 0 and sin == 0:
+                    continue
+                assert x_rel != 0, "ill-posed corner intersection, try perturbing offset"
+                if y > min_y:
+                    assert crossings[x,y-1,0] is None, "more than 2 associated wires? try increase pitch" 
+                    crossings[x, y-1, 0] = (x_rel, w) 
+                if y < max_y:
+                    assert crossings[x,y,1] is None, "more than 2 associated wires? try increase pitch"
+                    crossings[x, y, 1] = (x_rel, w)
+    if sin != 0:
         hop_y_grid = -cos/sin
         for x in range(min_x, max_x+1):
             for w, y_offset in enumerate(y_offsets):
@@ -44,6 +49,8 @@ def wireplane_overlap(wire_plane, tiling):
                 if y < min_y or y >= max_y:
                     continue
                 y_rel = y_crossing - y
+                if y_rel == 0 and cos == 0:
+                    continue
                 assert y_rel != 0, "ill-posed corner intersection, try perturbing offset"
                 if x > min_x:
                     assert crossings[x-1, y, 3] is None, "more than 2 associated wires? try increase pitch"
@@ -63,9 +70,10 @@ def wireplane_overlap(wire_plane, tiling):
                 if len(cross_i) == 1:
                     assert crossing[0][0] < 10**-PRECISION or 1-crossing[0][0] < 10**-PRECISION
                 w = bisect(bound_offsets, e2.dot((x+1/2, y+1/2))) - 1
-                if w >= num_wires or w < 0:
+                if w >= num_wires or w < 0: 
                     w = None
-                overlaps[(x, y)] = [(w_map(w), 1)]
+                else: w = w_map(w)
+                overlaps[(x, y)] = [(w, 1)]
                 continue
 
             assert len(cross_i) == 2, "more than 2 associated wires? try increase pitch"
@@ -128,6 +136,7 @@ def wireplane_overlap(wire_plane, tiling):
     return overlaps
 
 def fixed_pitch_wireplane(wires):
+    """convert fixed-pitch wires to wireplane (i.e. region boundary) representation"""
     angle, pitch, wire_0_offset, num_wires, w_map = wires 
     if angle > 0:
         assert pitch > np.cos((angle-45)*np.pi/180)*np.sqrt(2), "pitch should be wide enough to circumscribe pixel"
@@ -137,83 +146,121 @@ def fixed_pitch_wireplane(wires):
     bound_offsets = np.arange(num_wires+1)*pitch + wire_0_offset - 0.5*pitch
     return angle, bound_offsets, w_map
 
+def merged_fp_wireplane(wire_sets):
+    """ merge the fixed pitch wires (i.e. segments) of wire_sets, gaps are "filled" """
+    wire_sets_angle = wire_sets[0][0]
+    wire_sets = sorted(wire_sets, key = lambda off: off[2])
+    bound_offsets, w_map_map = [], []
+    prev_max_offset = None 
+    for i, wires in enumerate(wire_sets):
+        angle, pitch, wire_0_offset, num_wires, w_map = wires 
+        assert angle == wire_sets_angle, "wireplane must have single angle"
+        curr_bound_offsets = np.arange(num_wires+1)*pitch + wire_0_offset - 0.5*pitch
+        if prev_max_offset is not None:
+            assert wire_0_offset > prev_max_offset, "merge conflict"
+            gap_pitch = wire_0_offset - prev_max_offset
+            bound_offsets.pop()
+            curr_bound_offsets[0] += (pitch - gap_pitch)/2
+        bound_offsets.extend(curr_bound_offsets)
+        w_map_map.extend([(i, n) for n in range(num_wires)])
+        prev_max_offset = wire_0_offset + (num_wires - 1)*pitch
+    bound_offsets = np.array(bound_offsets)
+    w_map = lambda w: wire_sets[w_map_map[w][0]][4](w_map_map[w][1])
+    return wire_sets_angle, bound_offsets, w_map
+
 def wrap_fixed_pitch_wires(seed_wires, tiling):
+    """returns set of wrapped wires by reflecting seed_wires left and right, until out of tiling box."""
     angle, pitch, wire_0_offset, num_wires, w_map = seed_wires 
     min_x, max_x, min_y, max_y = tiling 
-    assert -90 < angle and angle < 90
-    cos = np.cos(angle*np.pi/180)
-    sin = np.sin(angle*np.pi/180)
+    cos = round(np.cos(np.radians(angle)), 2*PRECISION)
+    sin = round(np.sin(np.radians(angle)), 2*PRECISION)
+    e2 = np.array([cos, sin])
 
     wrapped_wires = [seed_wires]
-    if angle == 0:
-        return wrapped_planes
+    if cos == 0 or sin == 0:
+        return wrapped_wires
+    assert -90<angle and angle<90
 
-    def w_map_reversal(w_map_i):
-        if w_map_i == 1:
-            return w_map
-        else:
-            return lambda w: w_map(num_wires-1-w)
-
-    def crawl_up(e2_2, angle, w_map_i, min_offset):
+    def crawl_up(angle, e2, min_offset, num_wires, w_map):
+        new_num_wires = num_wires 
         max_offset = min_offset + (num_wires-1)*pitch
         if angle > 0:
-            left_crossing_min_y = (min_offset - cos*min_x)/e2_2
-            if left_crossing_min_y > max_y:
-                return
+            l_cross_upper = e2.dot((min_x, max_y))
+            if min_offset > l_cross_upper: return
+            if max_offset > l_cross_upper:
+                new_num_wires = math.floor((l_cross_upper - min_offset)/pitch) + 1
+                max_offset = min_offset + (new_num_wires-1)*pitch
             min_offset = 2*cos*min_x - max_offset
+            new_w_map = lambda w: w_map(new_num_wires - w - 1)
         else:
-            right_crossing_min_y = (max_offset - cos*max_x)/e2_2
-            if right_crossing_min_y > max_y:
-                return
+            r_cross_lower = e2.dot((max_x, max_y))
+            if max_offset < r_cross_lower: return
+            if min_offset < r_cross_lower:
+                new_num_wires = math.floor((max_offset - r_cross_lower)/pitch) + 1
             min_offset = 2*cos*max_x - max_offset
-        e2_2 *= -1
+            new_w_map = lambda w: w_map(num_wires - w - 1)
+        e2 = e2 * [1, -1]
         angle *= -1
-        w_map_i *= -1
-        wrapped_wires.append((angle, pitch, min_offset, num_wires, w_map_reversal(w_map_i)))
-        crawl_up(e2_2, angle, w_map_i, min_offset)
+        min_offset = round(min_offset, PRECISION*2)
+        wrapped_wires.append((angle, pitch, min_offset, new_num_wires, new_w_map))
+        crawl_up(angle, e2, min_offset, new_num_wires, new_w_map)
 
-    def crawl_down(e2_2, angle, w_map_i, min_offset):
+    def crawl_down(angle, e2, min_offset, num_wires, w_map):
+        new_num_wires = num_wires 
         max_offset = min_offset + (num_wires-1)*pitch
         if angle > 0:
-            right_crossing_max_y = (max_offset - cos*max_x)/e2_2
-            if right_crossing_max_y < min_y:
-                return
+            r_cross_lower = e2.dot((max_x, min_y))
+            if max_offset < r_cross_lower: return
+            if min_offset < r_cross_lower:
+                new_num_wires = math.floor((max_offset - r_cross_lower)/pitch) + 1
             min_offset = 2*cos*max_x - max_offset
+            new_w_map = lambda w: w_map(num_wires - w - 1)
         else:
-            left_crossing_max_y = (min_offset - cos*min_x)/e2_2
-            if left_crossing_max_y < min_y:
-                return
+            l_cross_upper = e2.dot((min_x, min_y))
+            if min_offset > l_cross_upper: return
+            if max_offset > l_cross_upper:
+                new_num_wires = math.floor((l_cross_upper - min_offset)/pitch) + 1
+                max_offset = min_offset + (new_num_wires-1)*pitch
             min_offset = 2*cos*min_x - max_offset
-        e2_2 *= -1
+            new_w_map = lambda w: w_map(new_num_wires - w - 1)
+        e2 = e2 * [1, -1]
         angle *= -1
-        w_map_i *= -1
-        wrapped_wires.append((angle, pitch, min_offset, num_wires, w_map_reversal(w_map_i)))
-        crawl_down(e2_2, angle, w_map_i, min_offset)
+        min_offset = round(min_offset, PRECISION*2)
+        wrapped_wires.append((angle, pitch, min_offset, new_num_wires, new_w_map))
+        crawl_down(angle, e2, min_offset, new_num_wires, new_w_map)
 
-    crawl_up(sin, angle, 1, wire_0_offset)
-    crawl_down(sin, angle, 1, wire_0_offset)
+    crawl_up(angle, e2, wire_0_offset, num_wires, w_map)
+    crawl_down(angle, e2, wire_0_offset, num_wires, w_map)
     return wrapped_wires
 
-"""
-def merge_wires(ol1, ol2):
-    def find_none_area(overlap):
-        none_a = [overlap[i][1] for i in range(len(overlap)) if overlap[i][0] is None]
-        return none_a[0] if none_a else 0
+def shift_wires_origin(wires, old_origin, new_origin):
+    angle, pitch, wire_0_offset, num_wires, w_map = wires 
+    cos = round(np.cos(np.radians(angle)), 2*PRECISION)
+    sin = round(np.sin(np.radians(angle)), 2*PRECISION)
+    e2 = np.array([cos, sin])
+    wire_n_offset = wire_0_offset + (num_wires-1)*pitch
+    
+    origin_offset = np.subtract(new_origin, old_origin).dot(e2)
+    wire_0_offset -= origin_offset
+    wire_n_offset -= origin_offset 
+    new_w_map = w_map
+    if abs(angle) > 90:
+        angle -= 180
+        wire_0_offset *= -1
+        wire_n_offset *= -1
+        new_w_map = lambda w: w_map(num_wires-1-w)
+    angle = round(angle, PRECISION*2)
+    return angle, pitch, round(min(wire_0_offset, wire_n_offset), PRECISION*2), num_wires, new_w_map
 
-    merged = dict()
-    for k, v1 in ol1.items():
-        v1_none_a = find_none_area(v1)
-        v2_none_a = find_none_area(v2)
-        assert v1_none_a + v2_none_a >= 1 - 1**(-PRECISION), "merge conflict"
-        if not v1_none_a:
-            merged[k] = v1
-        elif not v2_none_a:
-            merged[k] = v2
-"""
+
 if __name__ == "__main__":
     #print(simple_overlap((30, 2, 0,  -100, 100), (-100, 100, -100, 100)))
     #print(simple_overlap((45, 1.42, 0., -100, 100), (0, 2, 0, 2)))
     #print(wrap_fixed_pitch_wires((45, math.sqrt(2)+0.0001, 0, 5, IDENTITY), (-5, 5, -10, 10)))
     DUNE_TILE = (0, 1150, -2992, 0) 
-    print(wrap_fixed_pitch_wires((35.7, 2.3345, 0.1, 380, IDENTITY), DUNE_TILE))
-    print(len(wrap_fixed_pitch_wires((35.7, 2.3345, 0.1, 380, IDENTITY), DUNE_TILE)))
+    #print(wrap_fixed_pitch_wires((35.7, 2.3345, 0.1, 380, IDENTITY), DUNE_TILE))
+    #print(len(wrap_fixed_pitch_wires((35.7, 2.3345, 0.1, 380, IDENTITY), DUNE_TILE)))
+    wrapped = wrap_fixed_pitch_wires((35.7, 2.3345, 0.1, 380, IDENTITY), DUNE_TILE)
+    pos_wrapped = [wires for wires in wrapped if wires[0]>0]
+    print(pos_wrapped)
+    print(merged_fp_wireplane(pos_wrapped))

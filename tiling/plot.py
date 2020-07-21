@@ -183,13 +183,15 @@ def plot_pixelator(wire_sets, tiling, channel_vals):
             maxlen = np.linalg.norm((max_x-min_x, max_y-min_y))
             ax.add_patch(Rectangle(lower_l, pitch, 5*maxlen, angle, color = cmap(channel_vals[w_map(w)]/10), alpha=0.5))
 
-    pix = pixel.Pixelator(wire_sets, tiling)
+    pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = False)
     img = pix(channel_vals)
+    #pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), sparse_output = True)
+    #img = pix.sparse_to_dense(pix(channel_vals))
     x = np.arange(min_x, max_x)
     y = np.arange(min_y, max_y)
     pts = itertools.product(x, y)
     for x, y in pts:
-        ax.text(x+0.2, y + 0.5, [round(i, 3) for i in img[x+min_x, y+min_y]], size=8)
+        ax.text(x+0.2, y + 0.5, [round(i, 3) for i in img[x+min_x, y+min_y]], size=5)
 
     colors = cmap(np.arange(cmap.N))
     axes[1].imshow([colors], extent=[0, 10, 0, 1])

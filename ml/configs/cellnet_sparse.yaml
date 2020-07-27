@@ -1,0 +1,25 @@
+trainer: basic 
+output_dir: $SCRATCH/mlreco_cell/random_sparse
+
+data:
+    name: random_sparse
+    n_train: 1024
+    n_valid: 1024
+    spatial_size: 128
+    n_points: 100
+    batch_size: 128 
+
+model:
+    name: cellnet_sparse
+    spatial_size: 128
+    nChannels: 4
+    nStrides: 3
+    n_2D: 1
+
+loss: 
+    name: MSELoss 
+optimizer:
+    name: Adam
+    lr: 0.001
+train:
+    n_epochs: 100

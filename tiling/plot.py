@@ -183,10 +183,11 @@ def plot_pixelator(wire_sets, tiling, channel_vals):
             maxlen = np.linalg.norm((max_x-min_x, max_y-min_y))
             ax.add_patch(Rectangle(lower_l, pitch, 5*maxlen, angle, color = cmap(channel_vals[w_map(w)]/10), alpha=0.5))
 
-    pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = False)
-    img = pix(channel_vals)
+    pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = True)
+    pix_numba = pix.to_numba()
+    img = pix_numba([channel_vals])[0]
     #pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), sparse_output = True)
-    #img = pix.sparse_to_dense(pix(channel_vals))
+    img = pix.sparse_to_dense(img, True)
     x = np.arange(min_x, max_x)
     y = np.arange(min_y, max_y)
     pts = itertools.product(x, y)
@@ -218,4 +219,4 @@ np.random.shuffle(channel_vals2)
 channel_vals3 = [0,2, 9, 6]
 np.random.shuffle(channel_vals3)
 #plot_pixelator([(0, 1, 0.5, 4, IDENTITY), (90, 1, 0.5, 4, lambda w: w+4)], (0, 4, 0, 4), np.append(channel_vals, channel_vals2))
-#plot_pixelator([(60, 2, -3.501, 4, IDENTITY), (-60, 2, -3.501, 4, lambda w: w+4), (0, 2,-3, 4, lambda w: w+8)], (-4, 4, -4, 4), np.concatenate((channel_vals, channel_vals2, channel_vals3)))
+plot_pixelator([(60, 2, -3.501, 4, IDENTITY), (-60, 2, -3.501, 4, lambda w: w+4), (0, 2,-3, 4, lambda w: w+8)], (-4, 4, -4, 4), np.concatenate((channel_vals, channel_vals2, channel_vals3)))

@@ -82,10 +82,12 @@ def wireplane_overlap(wire_plane, tiling):
             w0 = w1 - 1
             if w1 >= num_wires:
                 w1 = None
+            else:
+                w1 = w_map(w1)
             if w0 < 0:
                 w0 = None 
-            w0 = w_map(w0) if w0 is not None else None
-            w1 = w_map(w1) if w1 is not None else None
+            else:
+                w0 = w_map(w0)
 
             if cross_i[0] == 0 and cross_i[1] == 1:
                 area = round((crossing[0][0] + crossing[1][0])/2, PRECISION)

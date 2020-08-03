@@ -1,7 +1,9 @@
 import numpy as np
-from square import * 
+from tiling.square import * 
 from numba import jit, prange
-from numba.typed import List
+from numba.typed import List, Dict
+from numba.core import types
+from numba.types.containers import UniTuple
 from functools import partial
 
 from numba import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
@@ -44,8 +46,8 @@ class Geom:
     @staticmethod
     def load(file_name = "geom.npz"):
         print("loading: ", file_name)
-        geom = np.load(file_name, allow_pickle = True)
-        return Geom(geom["pix_ol"], geom["chan_assoc"])
+        with np.load(file_name, allow_pickle = True) as geom:
+            return Geom(geom["pix_ol"], geom["chan_assoc"])
 
     @staticmethod
     def create(wire_sets, tiling, num_channels):
@@ -82,7 +84,7 @@ class Geom:
 
 class Pixelator:
     ACTIVE_THRESHOLD = 0
-    def __init__(self, geom, active_none = True, sparse_output = False):
+    def __init__(self, geom, active_none = True, sparse_output = True):
         self.geom = geom
         self.active_none = active_none
         self.sparse = sparse_output
@@ -124,112 +126,143 @@ class Pixelator:
                 if self.sparse: color_vals[color] += channel_density[chan]*area
                 else: img[pixel+(color,)] += channel_density[chan]*area
             if self.sparse:
-                point_cloud.append((pixel, color_vals))
+                point_cloud.append(np.concatenate((pixel, color_vals)))
         if self.sparse: 
-            return point_cloud
+            return np.array(point_cloud)
         return img
     __call__ = pixelate
+
+    def sparse_to_dense(self, point_cloud):
+        img = np.zeros((self.geom.num_x, self.geom.num_y, self.geom.num_colors))
+        for pt in point_cloud:
+            pixel = (int(pt[0]), int(pt[1]))
+            color_vals = pt[2:]
+            for color, color_val in enumerate(color_vals):
+                img[pixel+(color,)] = color_val
+        return img
 
     @staticmethod
     @jit(nopython=True, parallel=True)
     def pixelate_numba(geom, pix, channel_vals_batch):
         pix_ol, chan_assoc, num_x, num_y, num_chans, num_colors, NONE = geom
         threshold, active_none = pix
-        point_cloud_batch = List([List([[-1. for _ in range(2+num_colors)]]) for _ in range(len(channel_vals_batch))]) 
-        for batch_ind in prange(len(channel_vals_batch)):
-            channel_vals = channel_vals_batch[batch_ind]
-            active_by_color = [{(NONE, NONE)}   for _ in range(num_colors)]
-            for chan in range(num_chans):
-                if channel_vals[chan] <= threshold: continue
-                for color, pixels in enumerate(chan_assoc[chan]):
-                    active_by_color[color].update(pixels)
-            if active_none:
-                for color in range(num_colors):
-                    active_by_color[color].update(chan_assoc[NONE][color])
-            active_pixels = active_by_color[0]
-            for i in range(1, len(active_by_color)):
-                active_pixels = active_pixels.intersection(active_by_color[i])
-            active_pixels = list(active_pixels)
+        num_events = len(channel_vals_batch)
+        num_slices = len(channel_vals_batch[0])
+        batch_output = List([List([List([[-1. 
+            for _ in range(2+num_colors)]]) 
+            for _ in range(num_slices)])
+            for _ in range(num_events)])
+        for event_i in prange(num_events):
+            for slice_i in prange(num_slices):
+                channel_vals = channel_vals_batch[event_i][slice_i]
+                active_by_color = [{(NONE, NONE)} for _ in range(num_colors)]
+                for chan in range(num_chans):
+                    if channel_vals[chan] <= threshold: continue
+                    for color, pixels in enumerate(chan_assoc[chan]):
+                        active_by_color[color].update(pixels)
+                if active_none:
+                    for color in range(num_colors):
+                        active_by_color[color].update(chan_assoc[NONE][color])
+                active_pixels = active_by_color[0]
+                for i in range(1, len(active_by_color)):
+                    active_pixels = active_pixels.intersection(active_by_color[i])
+                active_pixels = list(active_pixels)
 
-            channel_overlaps = np.zeros(num_chans)
-            for pixel in active_pixels:
-                if pixel[0] == NONE: continue
-                for chan, color, area in pix_ol[pixel[0]][pixel[1]]: 
-                    if chan == NONE: continue
-                    channel_overlaps[int(chan)] += area
-            channel_density = [v/ol if ol!=0 else np.inf for v, ol in zip(channel_vals, channel_overlaps)]
-            point_cloud = List()
-            for pixel in active_pixels:
-                if pixel[0] == NONE: continue
-                color_vals = [0.0 for _ in range(num_colors)] 
-                for chan, color, area in pix_ol[pixel[0]][pixel[1]]: 
-                    if chan == NONE: continue
-                    color_vals[int(color)] += channel_density[int(chan)]*area
-                point_cloud.append(list(map(float, pixel)) + color_vals)
-            point_cloud_batch[batch_ind] = point_cloud
-        return point_cloud_batch
+                channel_overlaps = np.zeros(num_chans)
+                for pixel in active_pixels:
+                    if pixel[0] == NONE: continue
+                    for chan, color, area in pix_ol[pixel[0]][pixel[1]]: 
+                        if chan == NONE: continue
+                        channel_overlaps[int(chan)] += area
+                channel_density = [v/ol if ol!=0 else np.inf for v, ol in zip(channel_vals, channel_overlaps)]
+                point_cloud = List()
+                for pixel in active_pixels:
+                    if pixel[0] == NONE: continue
+                    color_vals = [0.0 for _ in range(num_colors)] 
+                    for chan, color, area in pix_ol[pixel[0]][pixel[1]]: 
+                        if chan == NONE: continue
+                        color_vals[int(color)] += channel_density[int(chan)]*area
+                    point_cloud.append(list(map(float, pixel)) + color_vals) #float array...
+                batch_output[event_i][slice_i] = point_cloud
+        return batch_output
 
-    def sparse_to_dense(self, point_cloud, use_numba = False):
-        img = np.zeros((self.geom.num_x, self.geom.num_y, self.geom.num_colors))
-        if use_numba:
-            for pt in point_cloud:
-                pixel = (int(pt[0]), int(pt[1]))
-                color_vals = pt[2:]
-                for color, color_val in enumerate(color_vals):
-                    img[pixel+(color,)] = color_val
-        else:
-            for pixel, color_vals in point_cloud:
-                for color, color_val in enumerate(color_vals):
-                    img[pixel+(color,)] = color_val
-        return img
+    @staticmethod
+    @jit(nopython=True, parallel=True, num_colors=3)
+    def numba_to_numpy(pix_batch):
+        num_events = len(pix_batch)
+        num_slices = len(pix_batch[0])
+        n_points = 0
+        slic_starts = []
+        event_starts = []
+        for event in pix_batch:
+            slic_starts_event = []
+            for slic in event:
+                slic_starts_event.append(n_points)
+                n_points += len(slic)
+            slic_starts.append(slic_starts_event)
+            event_starts.append(slic_starts_event[0])
+        output = np.empty((n_points, 4+num_colors))
+        for event_i in prange(num_events):
+            for slic_i in prange(num_slices):
+                slic_start = slic_starts[event_i][slic_i]
+                for i, point in enumerate(pix_batch[event_i][slic_i]):
+                    output_i = slic_start+i
+                    output[output_i, 0] = slic_i
+                    output[output_i, 1] = point[0]
+                    output[output_i, 2] = point[1]
+                    output[output_i, 3] = event_i
+                    for c in range(num_colors):
+                        output[output_i, 4+c] = point[2+c]
+        return output, np.array(event_starts)
 
-def make_pdsp_geom():
-    HEIGHT = 5984
-    WIDTH = 2300
-    UV_PITCH = 4.669 
-    X_PITCH = 4.79 
-    PIXEL_SIZE = 2 
-    tiling = (0, WIDTH//PIXEL_SIZE, -HEIGHT//PIXEL_SIZE, 0) 
-    U_SEED_WIRE_1 = (35.7, UV_PITCH/PIXEL_SIZE, 1.2, 400, IDENTITY)
-    V_SEED_WIRE_1 = shift_wires_origin((-35.7+180, UV_PITCH/PIXEL_SIZE, 1.2, 400, lambda w: 799-w), (tiling[1], 0), (0, 0))
-    U_SEED_WIRE_2 = (35.7, UV_PITCH/PIXEL_SIZE, 1.2, 400, lambda w: w+1280)
-    V_SEED_WIRE_2 = shift_wires_origin((-35.7+180, UV_PITCH/PIXEL_SIZE, 1.2, 400, lambda w: 2079-w), (tiling[1], 0), (0, 0))
-    APA = {
-        1: {
-            "U": wrap_fixed_pitch_wires(U_SEED_WIRE_1, tiling),
-            "V": wrap_fixed_pitch_wires(V_SEED_WIRE_1, tiling),
-            "X": [(0, X_PITCH/PIXEL_SIZE, 1.2, 480, lambda w: w+800)]
-            },
-        2: {
-            "U": wrap_fixed_pitch_wires(U_SEED_WIRE_2, tiling),
-            "V": wrap_fixed_pitch_wires(V_SEED_WIRE_2, tiling),
-            "X": [(0, X_PITCH/PIXEL_SIZE, 1.2, 480, lambda w: w+2080)]
-            }
-        }
-
-    filt_pos_ang = lambda wire_sets: [wires for wires in wire_sets if wires[0] > 0]
-    filt_neg_ang = lambda wire_sets: [wires for wires in wire_sets if wires[0] < 0]
-    Face1 = {
-            "X1": APA[1]["X"],
-            "U1": filt_pos_ang(APA[1]["U"]),
-            "V1": filt_neg_ang(APA[1]["V"]), 
-            "U2": filt_neg_ang(APA[2]["U"]),
-            "V2": filt_pos_ang(APA[2]["V"])
-            }
-    return Geom.create(np.concatenate(list(Face1.values())), tiling, 2560)
-    
+    @staticmethod
+    @jit(nopython=True, parallel=True)
+    def downsamples(pix_batch, downsample=(1,1,1), num_colors=3, kType=UniTuple(types.int64, 2), vType=types.float64[:]):
+        num_events = len(pix_batch)
+        num_slices = len(pix_batch[0])
+        assert num_slices % downsample[0] == 0, "drift downsample incompatible"
+        num_slices_down = num_slices//downsample[0]
+        batch_output = List([List([List([[-1. 
+            for _ in range(2+num_colors)]]) 
+            for _ in range(num_slices_down)])
+            for _ in range(num_events)])
+        for event_i in prange(num_events):
+            for slic_i_start in prange(num_slices_down):
+                slic_down_pixels = Dict.empty(
+                    key_type = kType,
+                    value_type = vType,
+                )
+                for slic_i in range(slic_i_start*downsample[0], (slic_i_start+1)*downsample[0]):
+                    for pt in pix_batch[event_i][slic_i]:
+                        coord = (pt[0]//downsample[1], pt[1]//downsample[2])
+                        vals = np.array(pt[2:])
+                        try:
+                            slic_down_pixels[coord] += vals
+                        except:
+                            slic_down_pixels[coord] = vals
+                point_cloud = List()
+                for k, v in slic_down_pixels.items():
+                    pt = list(map(float, k))
+                    for c in v:
+                        pt.append(c)
+                    point_cloud.append(pt)
+                batch_output[event_i][slic_i_start] = point_cloud
+        return batch_output
 
 if __name__ == "__main__":
-    import timeit, sys, time
+    import timeit, time
+    import sys
+    sys.path.append('..')
+    from geom.pdsp import *
     t0 = time.time()
-    N = 200
+    N = 100
     geo = Geom.create([(45, 2, 0.0001, N//2, IDENTITY), (90, 2, 0, N//2, lambda w: w+N//2)], (0, N, 0, N), N)
     #geo.save()
     #geo = Geom.load()
+    #geo = make_APA_geom(1) 
+    #geo.save("geom_pdsp_face1")
 
-    #geo = make_pdsp_pixelator()
-    #geo.save()
-    #geo = Geom.load("geom_pdsp.npz")
+    #geo = get_APA_geom(2) 
     print("geom: ", sys.getsizeof(geo))
     print("pixel overlap: ", sys.getsizeof(geo.pix_ol))
     print("chan assoc: ", sys.getsizeof(geo.chan_assoc))
@@ -240,25 +273,35 @@ if __name__ == "__main__":
     #print(timeit.timeit('pix(np.random.randint(0, 5, N))', globals=globals(), number=500)/500)
     pix = pix.to_numba()
     t2 = time.time()
-    print("to numba: ", t2-t1)
+    #print("to numba: ", t2-t1)
     #pixelate_numba(*pix.to_numba(), np.random.randint(0, 5, N))
 
-    print("numba avg: ")
+    #print("numba avg: ")
     #print("random imag size: ", sys.getsizeof(pix(np.random.randint(0, 5, N))))
-    print("dense input average time")
+    #print("dense input average time")
     #print(timeit.timeit('pix(np.random.randint(0, 5, (50, N)))', globals=globals(), number=1)/50)
-    batch_size = 1000
+    batch_size = 10
     from copy import deepcopy
     t = 0
-    for i in range(10):
+    for i in range(0):
         sparse = np.concatenate((np.ones((batch_size, 1*N//10)), np.zeros((batch_size, (9*N//10)))), axis=1)
         rng = np.random.default_rng()
         rng.shuffle(sparse, 1)
-        sparse = deepcopy(sparse)
+        sparse = np.tile(sparse,(10, 1, 1))
+        print(sparse.shape)
         t0 = time.time()
-        pix(sparse)
+        img = pix(sparse)
+        img2 = Pixelator.numba_to_numpy(img)
+        print(img2[:3])
+        print(img2[-3:])
+        img = Pixelator.numba_to_numpy(Pixelator.downsamples(img, (2, 2, 2)))
+        print("DOWNSAMPLE")
+        print(img[:3])
+        print(img[-3:])
+
         t += time.time()-t0
-    print("sparse avg time", t/10/batch_size)
+    np.savez_compressed("test.npz", img)
+    print("sparse avg time", t/10/batch_size/10)
     #print(timeit.timeit('sparse = deepcopy(sparse); pix(sparse)', globals=globals(), number=10)/500)
     """
     print(timeit.timeit("sparse = [1]*(1*N//10) + [0]*(9*N//10); \

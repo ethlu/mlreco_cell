@@ -25,6 +25,7 @@ class SparseCellNet(torch.nn.Module):
         point_cloud is a list of length batch size = 1
         point_cloud[0] has 3 coordinates + batch index + features
         """
+        point_cloud, = point_cloud
         coords = point_cloud[:, :4].long()
         features = point_cloud[:, 4:].float()
         x = self.sparseModel((coords, features))
@@ -45,8 +46,8 @@ def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness
          ).add(scn.AddTable())
     def U(nPlanes, n_2D, n_input_planes=-1): #Recursive function
         is2D = n_2D > 0
-        down_conv_kernel = [(downsample_t[0] if is2D else 1)] + downsample[:1]*2
-        down_conv_stride = [(downsample_t[1] if is2D else 1)] + downsample[1:]*2
+        down_conv_kernel = [(1 if is2D else downsample_t[0])] + downsample[:1]*2
+        down_conv_stride = [(1 if is2D else downsample_t[1])] + downsample[1:]*2
         m = scn.Sequential()
         for i in range(reps):
             block(m, n_input_planes if n_input_planes!=-1 else nPlanes[0], nPlanes[0], is2D)

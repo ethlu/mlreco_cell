@@ -1,0 +1,33 @@
+trainer: basic 
+output_dir: $SCRATCH/mlreco_cell/sparse_singleMu_ghost3D
+
+store_inference:
+    everyNepoch: 5
+    everyNsample: 10
+
+data:
+    name: sparse
+    data_path: $SCRATCH/larsim/reco_1GeV_xy
+    #train_i: [0, 2]
+    train_i: [0, 200]
+    inference_i: [200, 399]
+    #inference_i: [200, 202]
+    batch_size: 1 
+    threshold: 0.001
+model:
+    name: cellnet_binary
+    spatial_size: [1024, 1024, 512]
+    nChannels: 8
+    nStrides: 4
+    n_2D: 0
+    downsample_t: [2, 2]
+
+loss: 
+    name: BCELoss 
+optimizer:
+    name: Adam
+    lr: 0.001
+train:
+    n_epochs: 1000
+metrics:
+    acc: BinAccuracy

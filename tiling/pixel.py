@@ -187,8 +187,8 @@ class Pixelator:
         return batch_output
 
     @staticmethod
-    @jit(nopython=True, parallel=True, num_colors=3)
-    def numba_to_numpy(pix_batch):
+    @jit(nopython=True, parallel=True)
+    def numba_to_numpy(pix_batch, num_colors=3):
         num_events = len(pix_batch)
         num_slices = len(pix_batch[0])
         n_points = 0
@@ -251,11 +251,9 @@ class Pixelator:
 
 if __name__ == "__main__":
     import timeit, time
-    import sys
-    sys.path.append('..')
     from geom.pdsp import *
     t0 = time.time()
-    N = 100
+    N = 200
     geo = Geom.create([(45, 2, 0.0001, N//2, IDENTITY), (90, 2, 0, N//2, lambda w: w+N//2)], (0, N, 0, N), N)
     #geo.save()
     #geo = Geom.load()
@@ -280,10 +278,10 @@ if __name__ == "__main__":
     #print("random imag size: ", sys.getsizeof(pix(np.random.randint(0, 5, N))))
     #print("dense input average time")
     #print(timeit.timeit('pix(np.random.randint(0, 5, (50, N)))', globals=globals(), number=1)/50)
-    batch_size = 10
+    batch_size = 1000
     from copy import deepcopy
     t = 0
-    for i in range(0):
+    for i in range(3):
         sparse = np.concatenate((np.ones((batch_size, 1*N//10)), np.zeros((batch_size, (9*N//10)))), axis=1)
         rng = np.random.default_rng()
         rng.shuffle(sparse, 1)
@@ -291,10 +289,10 @@ if __name__ == "__main__":
         print(sparse.shape)
         t0 = time.time()
         img = pix(sparse)
-        img2 = Pixelator.numba_to_numpy(img)
+        img2 = Pixelator.numba_to_numpy(img, 2)
         print(img2[:3])
         print(img2[-3:])
-        img = Pixelator.numba_to_numpy(Pixelator.downsamples(img, (2, 2, 2)))
+        img = Pixelator.numba_to_numpy(Pixelator.downsamples(img, (2, 2, 2), 2), 2)
         print("DOWNSAMPLE")
         print(img[:3])
         print(img[-3:])
@@ -302,6 +300,8 @@ if __name__ == "__main__":
         t += time.time()-t0
     np.savez_compressed("test.npz", img)
     print("sparse avg time", t/10/batch_size/10)
+    with open("log.txt", 'a') as f:
+        f.write("\nsparse time "+ str(t/10/batch_size/10))
     #print(timeit.timeit('sparse = deepcopy(sparse); pix(sparse)', globals=globals(), number=10)/500)
     """
     print(timeit.timeit("sparse = [1]*(1*N//10) + [0]*(9*N//10); \

@@ -5,10 +5,22 @@ from geom.util import voxelize
 
 DOWNSAMPLE = (8, 4, 4)
 
-def process_xy(downsample = DOWNSAMPLE, tpc_num = 1, batch_size = int(sys.argv[3]), parsed_dir = sys.argv[1], out_dir = sys.argv[2]):
+def process_xy(downsample = DOWNSAMPLE, save_pix=False, tpc_num = 1, batch_size = int(sys.argv[3]), parsed_dir = sys.argv[1], out_dir = sys.argv[2]):
     from tiling.pixel import Pixelator, Geom
     parsed_files = [f for f in os.listdir(parsed_dir) if "TPC%d"%tpc_num in f]
-    energy_files = [f for f in parsed_files if "energy" in f]
+    energy_files = sorted([f for f in parsed_files if "energy" in f])
+    n_tasks = os.getenv('SLURM_NTASKS')
+    if n_tasks is not None:
+        n_tasks = int(n_tasks)
+        from data.util import n_splits
+        len_sample = len(energy_files)
+        splits = n_splits(len_sample, n_tasks)
+        rank = int(os.getenv('SLURM_PROCID'))
+        energy_files = energy_files[splits[rank]:splits[rank+1]]
+
+    print("process_energy input: ", '\n'.join(energy_files))
+    print("num files: ", len(energy_files))
+
     geom = get_APA_geom(tpc_num)
     pix = Pixelator(geom)
     pix = pix.to_numba()
@@ -39,13 +51,17 @@ def process_xy(downsample = DOWNSAMPLE, tpc_num = 1, batch_size = int(sys.argv[3
         ef_batches = np.split(np.array(ef_event_vals), num_batches)
         cf_batches = np.split(np.array(cf_event_vals), num_batches)
         for batch in range(num_batches):
-            out_f = "batch%d-"%batch_num + ef.replace("energy", "xy")
+            out_f = "batch%d-"%batch + ef.replace("energy", "xy")
+            out_pixel_f = "batch%d-"%batch + ef.replace("energy", "pixel")
             ef_batch = ef_batches[batch]
             cf_batch = cf_batches[batch]
             pix_batch = pix(cf_batch)
+            if save_pix:
+                pix_original, starts_original = Pixelator.numba_to_numpy(pix_batch)
+                np.savez_compressed(out_dir+"/"+out_pixel_f, pix=pix_original, starts=starts_original)
             pix_batch = Pixelator.downsamples(pix_batch, (downsample[0], downsample[2], downsample[1]))
             truth_dict_batch = [voxelize(truth_event, downsample, False) for truth_event in ef_batch]
-            Y_truth = np.array([[np.concatenate((k, v)) for k, v in voxels.items()] for voxels in truth_dict_batch])
+            Y_truth = np.array([np.array([np.concatenate((k, v)) for k, v in voxels.items()]) for voxels in truth_dict_batch])
             X, Y, event_starts= generate_xy(pix_batch, truth_dict_batch)
             np.savez_compressed(out_dir+"/"+out_f, X=X, Y=Y, starts=event_starts, Y_truth=Y_truth)
             batch_num += 1

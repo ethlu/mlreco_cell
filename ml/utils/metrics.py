@@ -45,6 +45,16 @@ class Accuracy(Metric):
     def result(self):
         return self.n_correct / self.n_total
 
+class BinAccuracy(Accuracy):
+    SIGMOID_THRESHOLD = 0.5
+    def __init__(self):
+        super().__init__()
+
+    def update(self, outputs, targets):
+        preds = torch.where(outputs>self.SIGMOID_THRESHOLD, torch.ones(1), torch.zeros(1))
+        self.n_total += targets.numel()
+        self.n_correct += (preds == targets).sum().item()
+
 def get_metrics(metrics_config):
     """Get a dictionary of requested metrics instances"""
     return dict((key, globals()[m]())

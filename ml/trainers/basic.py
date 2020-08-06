@@ -5,6 +5,7 @@ This module defines a generic trainer for simple models and datasets.
 # Externals
 import torch
 from torch.nn.parallel import DistributedDataParallel
+import numpy as np
 
 # Locals
 from .base import BaseTrainer
@@ -73,7 +74,7 @@ class BasicTrainer(BaseTrainer):
         utils.metrics.reset_metrics(self.metrics)
 
         # Loop over training batches
-        for i, (batch_input, batch_target) in enumerate(data_loader):
+        for i, (batch_input, batch_target, batch_i) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
             batch_target = batch_target.to(self.device)
             self.model.zero_grad()
@@ -103,7 +104,8 @@ class BasicTrainer(BaseTrainer):
         utils.metrics.reset_metrics(self.metrics)
 
         # Loop over batches
-        for i, (batch_input, batch_target) in enumerate(data_loader):
+        batch_outputs = {}
+        for i, (batch_input, batch_target, batch_i) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
             batch_target = batch_target.to(self.device)
             batch_output = self.model(batch_input)
@@ -111,7 +113,8 @@ class BasicTrainer(BaseTrainer):
             sum_loss += batch_loss
             utils.metrics.update_metrics(self.metrics, batch_output, batch_target)
             self.logger.debug('batch %i loss %.3f', i, batch_loss)
-
+            batch_outputs[batch_i] = batch_output
+            
         # Summarize validation metrics
         metrics_summary = utils.metrics.get_results(self.metrics)
 
@@ -120,7 +123,7 @@ class BasicTrainer(BaseTrainer):
                           len(data_loader.sampler), i + 1)
 
         # Return summary
-        return dict(loss=valid_loss, **metrics_summary)
+        return dict(loss=valid_loss, **metrics_summary), batch_outputs
 
 def get_trainer(**kwargs):
     return BasicTrainer(**kwargs)

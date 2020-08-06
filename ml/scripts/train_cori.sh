@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -C haswell
-#SBATCH -q debug
-#SBATCH -t 30
-#SBATCH -J train-cori
+#SBATCH -q regular
+#SBATCH -t 02:00:00
+#SBATCH -J train-hw-xyghost3d
 #SBATCH -o logs/%x-%j.out
 
 # Setup software
@@ -12,4 +12,4 @@ export KMP_AFFINITY="granularity=fine,compact,1,0"
 export KMP_BLOCKTIME=1
 
 # Run the training
-srun -l -u python train.py -d mpi $@
+srun -l -u -c 64 python train.py -d mpi $@

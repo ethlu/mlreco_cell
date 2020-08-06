@@ -1,3 +1,5 @@
+#!/bin/bash
+
 module load python
 source activate myenv
 
@@ -19,4 +21,3 @@ OUT_DIR=${BASE_DIR}/${OUT_DIR}/
 mkdir $OUT_DIR
 export PYTHONPATH=$PYTHONPATH:../
 NUMBA_THREADING_LAYER=omp NUMBA_NUM_THREADS=$NUM_THREADS python make_batches.py $IN_DIR $OUT_DIR $BATCH_SIZE
-

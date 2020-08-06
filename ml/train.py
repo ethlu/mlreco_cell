@@ -77,7 +77,8 @@ def main():
     if gpu is not None:
         logging.info('Using GPU %i', gpu)
     trainer = get_trainer(name=config['trainer'], distributed=distributed,
-                          rank=rank, output_dir=output_dir, gpu=gpu)
+                          rank=rank, output_dir=output_dir, gpu=gpu, 
+                          store_inference=config.get('store_inference', False))
 
     # Build the model and optimizer
     trainer.build(config)
@@ -92,12 +93,13 @@ def main():
                             **config['train'])
 
     # Print some conclusions
-    try_barrier()
-    n_train_samples = len(train_data_loader.sampler)
-    logging.info('Finished training')
-    train_time = np.mean(summary['train_time'])
-    logging.info('Train samples %g time %g s rate %g samples/s',
-                 n_train_samples, train_time, n_train_samples / train_time)
+    if train_data_loader is not None:
+        try_barrier()
+        n_train_samples = len(train_data_loader.sampler)
+        logging.info('Finished training')
+        train_time = np.mean(summary['train_time'])
+        logging.info('Train samples %g time %g s rate %g samples/s',
+                     n_train_samples, train_time, n_train_samples / train_time)
     if valid_data_loader is not None:
         n_valid_samples = len(valid_data_loader.sampler)
         valid_time = np.mean(summary['valid_time'])

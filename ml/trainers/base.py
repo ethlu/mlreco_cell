@@ -27,10 +27,18 @@ class BaseTrainer(object):
     """
 
     def __init__(self, output_dir=None, gpu=None,
-                 distributed=False, rank=0):
+                 distributed=False, rank=0, store_inference=False):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.output_dir = (os.path.expandvars(output_dir)
                            if output_dir is not None else None)
+        if store_inference:
+            if not isinstance(store_inference, dict):
+                self.store_inference = {"everyNepoch": 1, "everyNsample": 1}
+            else:
+                self.store_inference = store_inference
+            self.inference_dir = self.output_dir+'/inference/'
+            os.makedirs(self.inference_dir, exist_ok=True)
+
         self.gpu = gpu
         if gpu is not None:
             self.device = 'cuda:%i' % gpu
@@ -62,6 +70,14 @@ class BaseTrainer(object):
 
     def load_summaries(self):
         self.summaries = pd.read_csv(self._get_summary_file(), delim_whitespace=True)
+
+    def save_inference(self, inference, epoch):
+        if not self.store_inference: return
+        if epoch % self.store_inference["everyNepoch"]: return
+        for batch_i, output in inference.items():
+            batch_i = batch_i[0]
+            if batch_i % self.store_inference["everyNsample"]: continue
+            np.save(self.inference_dir+"epoch{}-batch{}".format(epoch, batch_i), np.array(output))
 
     def _get_checkpoint_file(self, checkpoint_id):
         return os.path.join(self.output_dir, 'checkpoints',
@@ -119,32 +135,51 @@ class BaseTrainer(object):
         start_epoch = 0 if self.summaries is None else self.summaries.epoch.max() + 1
 
         # Loop over epochs
-        for i in range(start_epoch, n_epochs):
-            utils.distributed.try_barrier()
+        if train_data_loader is not None:
+            for i in range(start_epoch, n_epochs):
+                utils.distributed.try_barrier()
 
-            self.logger.info('Epoch %i', i)
+                self.logger.info('Epoch %i', i)
+                summary = dict(epoch=i)
+
+                # Train on this epoch
+                start_time = time.time()
+                train_summary = self.train_epoch(train_data_loader)
+                train_summary['time'] = time.time() - start_time
+                self.logger.info('Train: %s', _format_summary(train_summary))
+                for (k, v) in train_summary.items():
+                    summary[f'train_{k}'] = v
+
+                # Evaluate on this epoch
+                if valid_data_loader is not None:
+                    start_time = time.time()
+                    valid_summary, outputs = self.evaluate(valid_data_loader)
+                    valid_summary['time'] = time.time() - start_time
+                    self.logger.info('Valid: %s', _format_summary(valid_summary))
+                    for (k, v) in valid_summary.items():
+                        summary[f'valid_{k}'] = v
+                    self.save_inference(outputs, i)
+
+                # Save summary, checkpoint
+                self.save_summary(summary)
+                if self.output_dir is not None and self.rank==0:
+                    self.write_checkpoint(checkpoint_id=i)
+
+        # Just Evaluate 
+        elif valid_data_loader is not None:
+            i = start_epoch - 1 #not a training epoch
+            utils.distributed.try_barrier()
             summary = dict(epoch=i)
 
-            # Train on this epoch
             start_time = time.time()
-            train_summary = self.train_epoch(train_data_loader)
-            train_summary['time'] = time.time() - start_time
-            self.logger.info('Train: %s', _format_summary(train_summary))
-            for (k, v) in train_summary.items():
-                summary[f'train_{k}'] = v
-
-            # Evaluate on this epoch
-            if valid_data_loader is not None:
-                start_time = time.time()
-                valid_summary = self.evaluate(valid_data_loader)
-                valid_summary['time'] = time.time() - start_time
-                self.logger.info('Valid: %s', _format_summary(valid_summary))
-                for (k, v) in valid_summary.items():
-                    summary[f'valid_{k}'] = v
+            valid_summary, outputs = self.evaluate(valid_data_loader)
+            valid_summary['time'] = time.time() - start_time
+            self.logger.info('Valid: %s', _format_summary(valid_summary))
+            for (k, v) in valid_summary.items():
+                summary[f'valid_{k}'] = v
+            self.save_inference(outputs, i)
 
             # Save summary, checkpoint
             self.save_summary(summary)
-            if self.output_dir is not None and self.rank==0:
-                self.write_checkpoint(checkpoint_id=i)
 
         return self.summaries

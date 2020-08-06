@@ -1,9 +1,9 @@
 import torch
 import sparseconvnet as scn
 
-class SparseCellNet(torch.nn.Module):
+class BinarySparseCellNet(torch.nn.Module):
     def __init__(self, spatial_size, nChannels, nStrides, n_2D, reps=2, downsample=[2, 2], downsample_t=[4, 4]):
-        super(SparseCellNet, self).__init__()
+        super().__init__()
         dimension = 3
         nInputFeatures = 3
         nOutputFeatures = 1
@@ -17,19 +17,22 @@ class SparseCellNet(torch.nn.Module):
                [1, 3, 3] if n_2D else 3,
                False)).add( 
            UResNet(nPlanes, n_2D, reps, downsample, downsample_t)).add(  # downsample = [filter size, filter stride]
+           scn.BatchNormReLU(nChannels)).add( 
            scn.OutputLayer(dimension))
         self.linear = torch.nn.Linear(nChannels, nOutputFeatures)
+        self.sigmoid = torch.nn.Sigmoid()
 
     def forward(self, point_cloud):
         """
         point_cloud is a list of length batch size = 1
         point_cloud[0] has 3 coordinates + batch index + features
         """
-        point_cloud, = point_cloud
+        point_cloud = point_cloud.squeeze(0)
         coords = point_cloud[:, :4].long()
         features = point_cloud[:, 4:].float()
         x = self.sparseModel((coords, features))
         x = self.linear(x)
+        x = self.sigmoid(x).double()
         return x.unsqueeze(0)
 
 def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness=0, n_input_planes=-1):
@@ -72,7 +75,7 @@ def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness
     return m
 
 def build_model(**kwargs):
-    return SparseCellNet(**kwargs)
+    return BinarySparseCellNet(**kwargs)
 
 if __name__ == "__main__":
     net = SparseCellNet(128, 2, 3, 2)

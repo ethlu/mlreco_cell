@@ -1,33 +1,33 @@
 trainer: basic 
-output_dir: $SCRATCH/mlreco_cell/singleElectronHit_ghost2D_1652-rep4_L1-2
-store_inference: 
-#outdir: inf_train
+output_dir: $SCRATCH/mlreco_cell/singleElectronWire_ghost3D-164_L10
+
+store_inference:
+#outdir: inf_pion
     everyNepoch: 2
     everyNsample: 5
 
 data:
     name: sparse
-    data_path: $SCRATCH/larsim/reco_1GeV_ElectronHit_xy
+    data_path: $SCRATCH/larsim/reco_1GeV_ElectronWire_xy
     train_i: [1, 100]
     inference_i: [101, 150]
-    #train_i: [1, 1]
-    #inference_i: [2, 2]
+    #inference_i: [0, 10]
     batch_size: 1 
     threshold: 0.001
 model:
     name: cellnet_binary
     spatial_size: [1024, 1024, 512]
     nChannels: 16
-    nStrides: 5
-    n_2D: 2
-    reps: 4
+    nStrides: 4
+    n_2D: 0
+    downsample_t: [2, 2]
 
 loss: 
     name: BCEL1Loss 
-    L1_lambda: 0.01
+    L1_lambda: 1
 optimizer:
     name: Adam
-    lr: 0.001
+    lr: 0.1
 train:
     n_epochs: 1000
 metrics:

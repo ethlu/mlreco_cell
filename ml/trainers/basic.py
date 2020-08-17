@@ -10,7 +10,7 @@ import numpy as np
 # Locals
 from .base import BaseTrainer
 from models import get_model
-import utils.metrics
+import utils.metrics, utils.losses
 
 class BasicTrainer(BaseTrainer):
     """Trainer code for basic single-model problems"""
@@ -29,7 +29,11 @@ class BasicTrainer(BaseTrainer):
 
         # Construct the loss function
         loss_config = config['loss']
-        Loss = getattr(torch.nn, loss_config.pop('name'))
+        try:
+            loss_name = loss_config.pop('name')
+            Loss = getattr(torch.nn, loss_name)
+        except:
+            Loss = utils.losses.get_loss(loss_name)
         self.loss_func = Loss(**loss_config)
 
         # Construct the optimizer
@@ -74,7 +78,7 @@ class BasicTrainer(BaseTrainer):
         utils.metrics.reset_metrics(self.metrics)
 
         # Loop over training batches
-        for i, (batch_input, batch_target, batch_i) in enumerate(data_loader):
+        for i, (batch_input, batch_target, batch_info) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
             batch_target = batch_target.to(self.device)
             self.model.zero_grad()
@@ -104,8 +108,8 @@ class BasicTrainer(BaseTrainer):
         utils.metrics.reset_metrics(self.metrics)
 
         # Loop over batches
-        batch_outputs = {}
-        for i, (batch_input, batch_target, batch_i) in enumerate(data_loader):
+        batch_outputs = []
+        for i, (batch_input, batch_target, batch_info) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
             batch_target = batch_target.to(self.device)
             batch_output = self.model(batch_input)
@@ -113,7 +117,7 @@ class BasicTrainer(BaseTrainer):
             sum_loss += batch_loss
             utils.metrics.update_metrics(self.metrics, batch_output, batch_target)
             self.logger.debug('batch %i loss %.3f', i, batch_loss)
-            batch_outputs[batch_i] = batch_output
+            batch_outputs.append((batch_info, batch_output))
             
         # Summarize validation metrics
         metrics_summary = utils.metrics.get_results(self.metrics)

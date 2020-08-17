@@ -2,6 +2,7 @@ import os, sys
 import ROOT
 import numpy as np
 from geom.util import voxelize
+from data.util import *
 
 LARLENGTH = 10 #larsoft uses cm instead of mm
 LARTIME = 0.001 #larsoft uses ns instead of us
@@ -75,10 +76,14 @@ def process(art_file, art_dir, product_dict):
         v["proc"]("END")
 
 def process_multi(product_dict = product_dict, art_dir = sys.argv[1]):
-    from data.util import KEYS
+    done_fd = filter_fd(files_info(os.listdir(sys.argv[2])), lambda k,v: len(v)==3)
     for root, dirs, files in os.walk(art_dir):
+        art_fd = filter_fd(files_info(files), lambda k,v: k[0]<=200)
+        f_filtered = flatten_fd(diff_fd(art_fd, done_fd))
+        files = slurm_split(f_filtered)
+        print(files)
         for f in files:
-            if KEYS["MU"](f) > 200: continue
+            #if file_info(f)[1] > 5: continue
             process(root+'/'+f, art_dir, product_dict)
 
 def proc_factory(proc_event, output_suffix, output_dir=sys.argv[2]):

@@ -3,7 +3,7 @@ Main training script for NERSC PyTorch examples
 """
 
 # System
-import os
+import os, shutil
 import argparse
 import logging
 
@@ -56,7 +56,13 @@ def main():
     output_dir = config.get('output_dir', None)
     if output_dir is not None:
         output_dir = os.path.expandvars(output_dir)
-        os.makedirs(output_dir, exist_ok=True)
+        configs_dir = output_dir+'/configs/'
+        os.makedirs(configs_dir, exist_ok=True)
+        if not args.verbose:
+            configs_i = [int(f[:-5]) for f in os.listdir(configs_dir)]
+            if not configs_i: config_i = 0
+            else: config_i = max(configs_i)+1
+            shutil.copy(args.config, configs_dir+'%d.yaml'%(config_i))
 
     # Setup logging
     log_file = (os.path.join(output_dir, 'out_%i.log' % rank)

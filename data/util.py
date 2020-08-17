@@ -2,52 +2,59 @@ import os, sys
 import shutil
 import numpy as np
 
-def move_processed(key, in_dir, processed_dir, move_dir):
-    processed = set([key(f) for f in os.listdir(processed_dir)])  
-    print(processed)
-    print("len processed ", len(processed))
-    target = [f for f in os.listdir(in_dir) if key(f) in processed]
-    print(target)
-    print("len target ", len(target))
-    for t in target:
-        shutil.move(in_dir+'/'+t, move_dir+'/'+t)
+EVENT_TYPES = ["Mu", "Electron", "Pion"]
+PRODUCT_TYPES = ["root", "energy", "wire", "hit", "xy", "pixel"]
+FILE_REGEX = "(%s).(\d+).(%s)" %("|".join(EVENT_TYPES), "|".join(PRODUCT_TYPES))
 
-def partition(key, n, in_dir, out_dir):
-    n = int(n)
-    f_dict = {}
-    for f in os.listdir(in_dir):
+def file_info(filename):
+    import re
+    x = re.findall(FILE_REGEX, filename)
+    if len(x) != 1:
+        print("bad file name ", filename)
+        return None
+    evt, index, prod = x[0]
+    return evt, int(index), prod
+
+def inf_file_info(filename):
+    import re
+    x = re.findall("epoch(\d+).(.+).np.", filename)
+    if len(x) != 1:
+        print("bad file name ", filename)
+        return None
+    epoch, f = x[0]
+    return int(epoch), f
+
+def time_info(filename):
+    return os.stat(filename)[-2],
+
+def files_info(files, groupby=[1], file_info=file_info):
+    files_dict = {}
+    for f in files:
+        info = file_info(f)
+        if info is None: continue
+        key = tuple([info[i] for i in groupby])
         try:
-            f_dict[key(f)].append(f)
-        except:
-            f_dict[key(f)] = [f]
-    print(f_dict)
-    len_sample = len(f_dict.keys())
-    print("len samples ", len_sample)
-    if len_sample % n == 0:
-        per_part = len_sample//n
-        i, j = 0, 0
-        os.mkdir(out_dir+'/%d'%j)
-        for v in f_dict.values():
-            if i==per_part:
-                i = 0
-                j += 1
-                os.mkdir(out_dir+'/%d'%j)
-            for f in v:
-                shutil.copy(in_dir+'/'+f, out_dir+'/%d/'%j+f)
-            i += 1
-    else:
-        per_part = len_sample//n
-        start_i = n - (len_sample % n)
-        i, j = 0, 0
-        os.mkdir(out_dir+'/%d'%j)
-        for v in f_dict.values():
-            if (i < start_i and i==per_part) or (i >= start_i and i==per_part+1):
-                i = 0
-                j += 1
-                os.mkdir(out_dir+'/%d'%j)
-            for f in v:
-                shutil.copy(in_dir+'/'+f, out_dir+'/%d/'%j+f)
-            i += 1
+            files_dict[key].append(f)
+        except KeyError:
+            files_dict[key] = [f]
+    return files_dict
+
+def filter_fd(files_dict, func=lambda k, v: True):
+    filtered_dict = {}
+    for k, v in files_dict.items():
+        if func(k, v):
+            filtered_dict[k] = v
+    return filtered_dict
+
+def diff_fd(dictA, dictB):
+    return filter_fd(dictA, lambda k, v: k not in dictB)
+
+def flatten_fd(files_dict):
+    sorted_indices = sorted(files_dict.keys()) 
+    samples = []
+    for i in sorted_indices:
+        samples.extend(files_dict[i])
+    return samples
         
 def n_splits(len_sample, n):
     per_part = len_sample//n
@@ -63,17 +70,31 @@ def n_splits(len_sample, n):
                 splits.append(splits[-1]+per_part)
         return splits
 
-KEYS = {
-        "MU" : lambda f: int(f[f.find("Mu")+3: f.find("Mu")+6])
-        }
+def slurm_split(samples):
+    n_tasks = os.getenv('SLURM_NTASKS')
+    if n_tasks is not None:
+        n_tasks = int(n_tasks)
+        len_sample = len(samples)
+        splits = n_splits(len_sample, n_tasks)
+        rank = int(os.getenv('SLURM_PROCID'))
+        samples = samples[splits[rank]:splits[rank+1]]
+    return samples
 
-def sort_data_dir(data_dir, key_name = None):
-    if key_name is None:
-        return sorted(os.listdir(data_dir))
-    return sorted(os.listdir(data_dir), key = KEYS[key_name])
+def remove_latest(dir_name):
+    WITHIN = 10
+    files = [dir_name+'/'+f for f in os.listdir(dir_name)]
+    time_dict = files_info(files, [0], time_info)
+    latest_time = max(time_dict.keys())[0]
+    remove = flatten_fd(filter_fd(time_dict, lambda k, v: k[0] > latest_time - WITHIN))
+    print("Files removed: ", remove)
+    print("Number: ",len(remove))
+    for f in remove:
+        os.remove(f)
 
 if __name__=="__main__":
-    #print(sort_data_dir(sys.argv[1], "MU"))
+    #file_info(sys.argv[1])
+    #remove_latest(sys.argv[1])
+    #inf_file_info(sys.argv[1])
     pass
     #move_processed(lambda f: f[f.find("Mu"): f.find("Mu")+6])
     #partition(lambda f: f[f.find("Mu"): f.find("Mu")+6])

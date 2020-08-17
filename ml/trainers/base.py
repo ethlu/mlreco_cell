@@ -32,12 +32,14 @@ class BaseTrainer(object):
         self.output_dir = (os.path.expandvars(output_dir)
                            if output_dir is not None else None)
         if store_inference:
-            if not isinstance(store_inference, dict):
-                self.store_inference = {"everyNepoch": 1, "everyNsample": 1}
-            else:
-                self.store_inference = store_inference
-            self.inference_dir = self.output_dir+'/inference/'
+            self.store_inference = {"everyNepoch": 1, "everyNsample": 1, "outdir": "inference"}
+            if isinstance(store_inference, dict):
+                for k, v in store_inference.items():
+                    self.store_inference[k] = v 
+            self.inference_dir = self.output_dir+'/'+self.store_inference['outdir']
             os.makedirs(self.inference_dir, exist_ok=True)
+        else:
+            self.store_inference = False
 
         self.gpu = gpu
         if gpu is not None:
@@ -48,6 +50,7 @@ class BaseTrainer(object):
         self.distributed = distributed
         self.rank = rank
         self.summaries = None
+        self.start_epoch = 0
 
     def _get_summary_file(self):
         return os.path.join(self.output_dir, 'summaries_%i.csv' % self.rank)
@@ -74,10 +77,10 @@ class BaseTrainer(object):
     def save_inference(self, inference, epoch):
         if not self.store_inference: return
         if epoch % self.store_inference["everyNepoch"]: return
-        for batch_i, output in inference.items():
-            batch_i = batch_i[0]
-            if batch_i % self.store_inference["everyNsample"]: continue
-            np.save(self.inference_dir+"epoch{}-batch{}".format(epoch, batch_i), np.array(output))
+        for batch_info, output in inference:
+            batch_i, batch_f = batch_info
+            if batch_i[0] % self.store_inference["everyNsample"]: continue
+            np.save(self.inference_dir+'/'+"epoch%d-%s"%(epoch, batch_f[0].replace("xy", "yinf")), np.array(output))
 
     def _get_checkpoint_file(self, checkpoint_id):
         return os.path.join(self.output_dir, 'checkpoints',
@@ -94,19 +97,27 @@ class BaseTrainer(object):
         """Load from checkpoint"""
         assert self.output_dir is not None
 
-        # First, load the summaries
+        # Now load the checkpoint
+        try:
+            rank = self.rank
+            self.rank = 0
+            self.load_summaries()
+            if checkpoint_id == -1:
+                checkpoint_id = self.summaries.epoch.iloc[-1]
+            self.start_epoch = self.summaries.epoch.max() + 1
+            checkpoint_file = self._get_checkpoint_file(checkpoint_id)
+            self.logger.info('Loading checkpoint at %s', checkpoint_file)
+            self.load_state_dict(torch.load(checkpoint_file, map_location=self.device))
+        except FileNotFoundError:
+            self.logger.info('No summaries 0 file found. Will not load checkoint')
+        self.rank = rank
+        self.summaries = None
+
+        # load the summaries
         try:
             self.load_summaries()
         except FileNotFoundError:
-            self.logger.info('No summaries file found. Will not load checkoint')
-            return
-
-        # Now load the checkpoint
-        if checkpoint_id == -1:
-            checkpoint_id = self.summaries.epoch.iloc[-1]
-        checkpoint_file = self._get_checkpoint_file(checkpoint_id)
-        self.logger.info('Loading checkpoint at %s', checkpoint_file)
-        self.load_state_dict(torch.load(checkpoint_file, map_location=self.device))
+            self.logger.info('No summaries file found.')
 
     def state_dict(self):
         """Virtual method to return state dict for checkpointing"""
@@ -131,12 +142,9 @@ class BaseTrainer(object):
     def train(self, train_data_loader, n_epochs, valid_data_loader=None):
         """Run the model training"""
 
-        # Determine starting epoch
-        start_epoch = 0 if self.summaries is None else self.summaries.epoch.max() + 1
-
         # Loop over epochs
         if train_data_loader is not None:
-            for i in range(start_epoch, n_epochs):
+            for i in range(self.start_epoch, n_epochs):
                 utils.distributed.try_barrier()
 
                 self.logger.info('Epoch %i', i)
@@ -167,8 +175,10 @@ class BaseTrainer(object):
 
         # Just Evaluate 
         elif valid_data_loader is not None:
-            i = start_epoch - 1 #not a training epoch
             utils.distributed.try_barrier()
+
+            i = self.start_epoch - 1
+            self.logger.info('Epoch %i', i)
             summary = dict(epoch=i)
 
             start_time = time.time()
@@ -178,8 +188,6 @@ class BaseTrainer(object):
             for (k, v) in valid_summary.items():
                 summary[f'valid_{k}'] = v
             self.save_inference(outputs, i)
-
-            # Save summary, checkpoint
-            self.save_summary(summary)
+            self.save_summary(summary, write_file=False)
 
         return self.summaries

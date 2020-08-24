@@ -17,7 +17,7 @@ class SparseDataset(torch.utils.data.Dataset):
         with np.load(self.data_path + "/" + f) as xy_f:
             if self.threshold is None:
                 return xy_f["X"], xy_f["Y"].astype(np.float32), batch_info 
-            return xy_f["X"], np.where(xy_f["Y"] > self.threshold, 1.0, 0.0).astype(np.float64), batch_info
+            return xy_f["X"], np.where(xy_f["Y"] > self.threshold, 1.0, 0.0).astype(np.float32), batch_info
             
     def __len__(self):
         return self.n_samples

@@ -32,7 +32,7 @@ class BinarySparseCellNet(torch.nn.Module):
         features = point_cloud[:, 4:].float()
         x = self.sparseModel((coords, features))
         x = self.linear(x)
-        x = self.sigmoid(x).double()
+        x = self.sigmoid(x)
         return x.unsqueeze(0)
 
 def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness=0, n_input_planes=-1):

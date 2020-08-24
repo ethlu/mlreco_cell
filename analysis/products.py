@@ -5,6 +5,25 @@ import matplotlib.pyplot as plt
 from data.util import *
 from analysis.util import *
 
+def parse_xy(event = 1, E_scale = 1, xy_file = sys.argv[1]):
+    with np.load(xy_file, allow_pickle=True) as xy_f:
+        pix_batch=xy_f["X"]
+        energys_truth = xy_f["Y_truth"]
+        event_starts=xy_f["starts"]
+    event_starti = event_starts[event]
+    if event == len(event_starts)-1:
+        event_endi = -1
+        event_pixels = pix_batch[event_starti:]
+    else:
+        event_endi = event_starts[event+1]
+        event_pixels = pix_batch[event_starti:event_endi]
+    coords_active = event_pixels[:,:3]
+    voxel_active = {tuple(pt[:3]):sum(pt[4:]) for pt in event_pixels}
+    event_truth = energys_truth[event]
+    voxel_truth = {tuple(pt[:3]):pt[3]*E_scale for pt in event_truth}
+    return voxel_truth, voxel_active, (event_starti, event_endi, coords_active)
+
+
 def compare_energys(event = 3, simchan_file = sys.argv[1], energy_file=sys.argv[2]):
     with np.load(simchan_file) as batch_simchans:
         event_simchans = batch_simchans["arr_%d"%event]
@@ -108,39 +127,66 @@ def compare_active_pixels(event = 10, pixel_file = sys.argv[1], energy_file=sys.
     ax2.scatter3D(*active_pixels.T)
     plt.show()
 
-def compare_true_active(fig, event = 1, true_thres = 0, plot_lims=None, view_angle=None, plot_histo=True, xy_file = sys.argv[1]):
-    dict_truth, coords_active, _ = parse_xy(event, true_thres, xy_file=xy_file)
-    coords_active = set(coords_active)
-    coords_T = set(dict_truth.keys())
-    coords_T_active = coords_T.intersection(coords_active)
-    E_T = np.array(list(dict_truth.values()))
-    E_T_active = [dict_truth[pt] for pt in coords_T_active]
-    if plot_histo:
-        fig_hist, ax = plt.subplots()
-        _, bins, _ = ax.hist(E_T, bins=20, label="True")
-        ax.hist(E_T_active, bins=bins, label="Active")
-        E_T = sum(E_T)
-        E_T_active = sum(E_T_active)
-        fig_hist.text(0.5, 0.7, "True Threshold: %f"%true_thres)
-        fig_hist.text(0.5, 0.6, "Total True Energy: %.2f"%E_T)
-        fig_hist.text(0.5, 0.5, "Total True & Active Energy: %.2f"%E_T_active)
-        ax.set_xticks(bins)
-        #ax.set_xlim(0, 3)
-        ax.legend()
-    else:
-        E_T = sum(E_T)
-        E_T_active = sum(E_T_active)
+def compare_true_active(fig, fig_histo, fig_inf, fig_histo_inf, event = 1, downsample=(1,1,1), true_thres = 0, plot_slice=False, plot_lims=None, view_angle=None, plot_histo=True, xy_file = sys.argv[1]):
+    voxel_truth, voxel_active, event_info = parse_xy(event, 1/3, xy_file)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
 
-    compare_voxels(fig, coords_T, coords_active, "True", "Active", plot_lims, view_angle)
-    fig.text(0.05, 0.7, "True Threshold: %f"%true_thres)
-    fig.text(0.05, 0.6, "Total True Energy: %.2f"%E_T)
-    fig.text(0.05, 0.5, "Total True & Active Energy: %.2f"%E_T_active)
-    fig.suptitle("Truth vs. Active")
+    thres, plot_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf = \
+            inference_analysis(voxel_truth, voxel_active, 0, plot_lims, plot_slice)
+
+    evt_voxel_FN, evt_voxel_TP, _, evt_voxel_FP = evt_voxels_comp
+    voxel_FN, voxel_TP, _, voxel_FP = voxels_comp_T
+    x_lim, y_lim, z_lim = plot_lims
+
+    if fig is not None:
+        scatter_voxels_comp(fig, voxels_comp_T, "True [MeV]", "Active [MeV]", plot_slice, view_angle)
+        fig.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig.text(0., 0.85, "EVENT STATS: ")
+        fig.text(0., 0.75, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(evt_voxel_TP), voxel_sum(evt_voxel_FP), voxel_sum(evt_voxel_FN)))
+        fig.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
+        fig.text(0., 0.55, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(voxel_TP), voxel_sum(voxel_FP), voxel_sum(voxel_FN)))
+        fig.suptitle("True vs. Active [Energy]\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
+        fig.show()
+
+    if fig_histo is not None:
+        histo_voxels_comp(fig_histo, fig_histo.add_subplot(), voxels_comp_T, "True [MeV]", "Active [MeV]")
+        fig_histo.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        fig_histo.suptitle("Energy Histo True vs. Active\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
+        fig_histo.show()
+
+    if fig_inf is not None:
+        scatter_voxels_comp(fig_inf, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", plot_slice, view_angle)
+        fig_inf.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig_inf.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
+        fig_inf.suptitle("True vs. Active [Channel Val]\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
+        fig_inf.show()
+
+    if fig_histo_inf is not None:
+        ax_comp = fig_histo_inf.add_subplot()
+        histo_voxels_comp(fig_histo_inf, ax_comp, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", log_yscale=True)
+        fig_histo_inf.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        fig_histo_inf.suptitle("Channel Val Histo \nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
+        fig_histo_inf.show()
+
+def plot_pixel_stats(event = 1, true_thres=0, xy_file=sys.argv[1]):
+    voxel_truth, voxel_active, event_info = parse_xy(event, 1/3, xy_file)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
+
+    voxel_FN, voxel_T_active, _, voxel_FP = comp_voxels(voxel_truth, voxel_active)
+
+    n_T = len(voxel_truth)
+    n_TP_naive = len(voxel_T_active) #naive: treat all active as positive
+    n_FP_naive = len(voxel_FP)
+
+    xs, ys, thresholds = SP_curve(voxel_T_active, voxel_active, np.arange(100)*0.1)
+    plt.plot(xs, ys)
     plt.show()
+
 
 if __name__=="__main__":
     for i in range(5):
         print(i)
         #compare_energys(i)
         #compare_channels(i)
-        compare_true_active(plt.figure(), i)
+        #compare_true_active(plt.figure(), i)
+        #plot_pixel_stats(i)

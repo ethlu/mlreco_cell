@@ -4,43 +4,38 @@ from mpl_toolkits import mplot3d
 import matplotlib.pyplot as plt
 from data.util import *
 from analysis.util import *
+from analysis.products import parse_xy
 
 N_VOXEL = (3585//(1.565/2)//8)*(5984//2//4)*(2300//2//4)
-def yinf_stats(event = 1, thresholds = np.arange(50)*2E-2, true_thres=0, xy_file=sys.argv[1], yinf_file=sys.argv[2]):
-    dict_truth, coords_active, event_starts = parse_xy(event, xy_file=xy_file, true_thres=true_thres)
-
+def parse_yinf(event_info, yinf_file=sys.argv[1]):
+    event_starti, event_endi, coords_active = event_info
     yinf_batch = np.load(yinf_file)[0]
-    n_events = len(event_starts)
-    if event == n_events-1:
-        event_yinf = yinf_batch[event_starts[event]:]
+    if event_endi == -1:
+        event_yinf = yinf_batch[event_starti:]
     else:
-        event_yinf = yinf_batch[event_starts[event]:event_starts[event+1]]
-    event_yinf = {tuple(pt):val[0] for pt, val in zip(coords_active, event_yinf)}
-    
-    coords_active = set(coords_active)
-    n_active = len(coords_active)
-    coords_T = set(dict_truth.keys())
-    n_T = len(coords_T)
-    coords_T_active = coords_T.intersection(coords_active)
+        event_yinf = yinf_batch[event_starti:event_endi]
+    voxel_yinf = {tuple(pt):val[0] for pt, val in zip(coords_active, event_yinf)}
+    return voxel_yinf
 
-    n_TP_naive = len(coords_T_active) #naive: treat all active as positive
-    n_FP_naive = n_active - n_TP_naive
-    coords_FN_naive = coords_T.difference(coords_T_active)
-    n_FN_naive = len(coords_FN_naive)
-    sensitivity_naive = n_TP_naive/(n_TP_naive + n_FN_naive)
-    #print("sensitivity naive: ", sensitivity_naive) #upper bound sensitivity
+def get_xy_file(xy_dir, yinf_file):
+    _, f = inf_file_info(yinf_file)
+    xy_file = xy_dir + '/' + f.replace("yinf", "xy") + '.npz'
+    return xy_file
 
-    xs, ys = [], []
-    for thres in thresholds:
-        x, y = P_stats(set_thres(event_yinf, thres), coords_T_active, N_VOXEL)
-        xs.append(x)
-        ys.append(y)
+def yinf_stats(event = 1, true_thres=0, xy_file=sys.argv[1], yinf_file=sys.argv[2]):
+    voxel_truth, voxel_active, event_info = parse_xy(event, 1, xy_file)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
+
+    voxel_FN, voxel_T_active, _, voxel_FP = comp_voxels(voxel_truth, voxel_active)
+
+    n_T = len(voxel_truth)
+    n_TP_naive = len(voxel_T_active) #naive: treat all active as positive
+    n_FP_naive = len(voxel_FP)
+
+    voxel_yinf = parse_yinf(event_info, yinf_file)
+    xs, ys, thresholds = SP_curve(voxel_T_active, voxel_yinf)
+
     return xs, ys, thresholds, n_T, n_TP_naive, n_FP_naive
-
-def select_threshold(xs, ys, thresholds):
-    sums = np.array(xs) + np.array(ys)
-    max_i = np.argmax(sums)
-    return thresholds[max_i], xs[max_i], ys[max_i]
 
 def yinf_avg_stats(n_yinf_files = 10, n_events=50, epoch = -1, true_thres = 0, stats_dir = "stats", plot = False, xy_dir = sys.argv[1], yinf_dir=sys.argv[2]):
     yinf_files = os.listdir(yinf_dir)
@@ -56,9 +51,7 @@ def yinf_avg_stats(n_yinf_files = 10, n_events=50, epoch = -1, true_thres = 0, s
     Xs, Ys, N_T, N_TP_naive, N_FP_naive = [], [], [], [], []
     for yinf_file in yinf_files:
         print(yinf_file)
-        _, f = inf_file_info(yinf_file)
-        #xy_file = xy_dir + '/' + sorted(os.listdir(xy_dir))[yinf_batch+n_train]
-        xy_file = xy_dir + '/' + f.replace("yinf", "xy") + '.npz'
+        xy_file = get_xy_file(xy_dir, yinf_file)
         for event in range(n_events):
             xs, ys, thresholds, n_T, n_TP_naive, n_FP_naive = yinf_stats(event, true_thres = true_thres, yinf_file=yinf_dir+'/'+yinf_file, xy_file=xy_file)
             Xs.append(xs)
@@ -120,47 +113,69 @@ def compare_yinf_stats(fig, stats_files = sys.argv[1:], labels=None):
     #plt.savefig("plots_comp_yinf/comp_yinf.png")
     #plt.clf()
 
-def plot_yinf(fig, event=1, save_file=None, thres=None, true_thres=0, plot_lims=None, view_angle=None, xy_dir = sys.argv[1], yinf_file=sys.argv[2]):
-    TRUE_THRESHOLD=true_thres
-    _, f = inf_file_info(yinf_file)
-    xy_file = xy_dir + '/' + f.replace("yinf", "xy") + '.npz'
-    dict_truth, coords_active, event_starts = parse_xy(event, xy_file=xy_file, true_thres=TRUE_THRESHOLD)
+def plot_yinf(fig, fig_histo, fig_inf, fig_histo_inf, event=1, downsample=(1,1,1), thres=None, true_thres=0, plot_slice=False, plot_lims=None, view_angle=None, xy_dir = sys.argv[1], yinf_file=sys.argv[2]):
+    xy_file = get_xy_file(xy_dir, yinf_file)
+    voxel_truth, voxel_active, event_info = parse_xy(event, 1/3, xy_file)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
+    _, voxel_T_active, _, _ = comp_voxels(voxel_truth, voxel_active)
+    voxel_yinf = parse_yinf(event_info, yinf_file)
 
-    yinf_batch = np.load(yinf_file)[0]
-    n_events = len(event_starts)
-    if event == n_events-1:
-        event_yinf = yinf_batch[event_starts[event]:]
-    else:
-        event_yinf = yinf_batch[event_starts[event]:event_starts[event+1]]
-    event_yinf = {tuple(pt):val[0] for pt, val in zip(coords_active, event_yinf)}
-    
-    coords_active = set(coords_active)
-    coords_T = set(dict_truth.keys())
-    coords_T_active = coords_T.intersection(coords_active)
+    thres, plot_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf = \
+            inference_analysis(voxel_T_active, voxel_yinf, thres, plot_lims, plot_slice)
 
-    xs, ys, thresholds, _, _, _ = yinf_stats(event, true_thres=true_thres, xy_file=xy_file, yinf_file=yinf_file)
-    if thres is None:
-        SIGMOID_THRESHOLD, purity, sensitivity = select_threshold(xs, ys, thresholds)
-    else: 
-        purity, sensitivity = P_stats(set_thres(event_yinf, thres), coords_T_active, N_VOXEL)
-        SIGMOID_THRESHOLD = thres
+    evt_voxel_FN, evt_voxel_TP, _, evt_voxel_FP = evt_voxels_comp
+    voxel_FN, voxel_TP, _, voxel_FP = voxels_comp_T
+    x_lim, y_lim, z_lim = plot_lims
 
-    x_lim, y_lim, z_lim = compare_voxels(fig, coords_T_active, set_thres(event_yinf, SIGMOID_THRESHOLD).keys(), "(Active&True)", "Positive", plot_lims, view_angle)
-    fig.text(0.05, 0.7, "True Threshold: %f"%TRUE_THRESHOLD)
-    fig.text(0.05, 0.6, "Prediction Threshold: %f"%SIGMOID_THRESHOLD)
-    fig.text(0.05, 0.5, "Sensitivity: %.2f, Purity: %.2f"%(sensitivity, purity))
-    fig.suptitle("(Active&True) vs. Positive\nInference file: %s, Event: %d"%(yinf_file[yinf_file.rfind('/')+1:], event))
-    Size = fig.get_size_inches()
-    if save_file is None:
-        plt.show()
-    else:
-        fig.set_size_inches(Size[0]*2, Size[1]*2, forward=True)
-        plt.savefig("plots_yinf/%s_Evt%d.png"%(save_file, event))
-    return x_lim, y_lim, z_lim, SIGMOID_THRESHOLD
+    if fig is not None:
+        scatter_voxels_comp(fig, voxels_comp_T, "(Active&True) [MeV]", "Positive [MeV]", plot_slice, view_angle)
+        fig.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig.text(0., 0.9, "Prediction Threshold: %f"%thres)
+        fig.text(0., 0.85, "EVENT STATS: ")
+        fig.text(0., 0.8, "Sensitivity: %.2f, Purity: %.2f"%(evt_sensitivity, evt_purity))
+        fig.text(0., 0.75, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(evt_voxel_TP), voxel_sum(evt_voxel_FP), voxel_sum(evt_voxel_FN)))
+        fig.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
+        fig.text(0., 0.6, "Sensitivity: %.2f, Purity: %.2f"%(sensitivity, purity))
+        fig.text(0., 0.55, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(voxel_TP), voxel_sum(voxel_FP), voxel_sum(voxel_FN)))
+        fig.suptitle("(Active&True) vs. Positive [Energy]\nInference file: %s, Event: %d"%(yinf_file[yinf_file.rfind('/')+1:], event))
+        fig.show()
+
+    if fig_histo is not None:
+        histo_voxels_comp(fig_histo, fig_histo.add_subplot(), voxels_comp_T, "(Active&True) [MeV]", "Positive [MeV]")
+        fig_histo.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        fig_histo.text(0.4, 0.75, "Prediction Threshold: %f"%thres)
+        fig_histo.suptitle("Energy Histo (Active&True) vs. Positive\nInference file: %s, Event: %d"%(yinf_file[yinf_file.rfind('/')+1:], event))
+        fig_histo.show()
+
+    if fig_inf is not None:
+        scatter_voxels_comp(fig_inf, voxels_comp_inf, "(Active&True) [Sigmoid]", "Positive [Sigmoid]", plot_slice, view_angle)
+        fig_inf.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig_inf.text(0., 0.9, "Prediction Threshold: %f"%thres)
+        fig_inf.text(0., 0.85, "EVENT STATS: ")
+        fig_inf.text(0., 0.8, "Sensitivity: %.2f, Purity: %.2f"%(evt_sensitivity, evt_purity))
+        fig_inf.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
+        fig_inf.text(0., 0.6, "Sensitivity: %.2f, Purity: %.2f"%(sensitivity, purity))
+        fig_inf.suptitle("(Active&True) vs. Positive [Sigmoid]\nInference file: %s, Event: %d"%(yinf_file[yinf_file.rfind('/')+1:], event))
+        fig_inf.show()
+
+    if fig_histo_inf is not None:
+        ax_comp = fig_histo_inf.add_subplot(211)
+        histo_voxels_comp(fig_histo_inf, ax_comp, voxels_comp_inf, "(Active&True) [Sigmoid]", "Positive [Sigmoid]")
+        fig_histo_inf.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        fig_histo_inf.text(0.4, 0.75, "Prediction Threshold: %f"%thres)
+        ax_inf = fig_histo_inf.add_subplot(212)
+        voxel_yinf, voxel_T_active = filter_voxels_coord(plot_lims, voxel_yinf, voxel_T_active)
+        histo_voxels(fig_histo_inf, ax_inf, (voxel_yinf, set_voxel_vals(voxel_T_active, voxel_yinf)),
+                ("All Inference [Sigmoid]", "Active&True [Sigmoid]"), ("black", "b"), 
+                "Active & (Active&True) Inference [Sigmoid]", 10, True)
+        fig_histo_inf.suptitle("Sigmoid Histo \nInference file: %s, Event: %d"%(yinf_file[yinf_file.rfind('/')+1:], event))
+        fig_histo_inf.show()
+    return plot_lims, thres
 
 if __name__=="__main__":
-    for i in range(5):
+    for i in range(10):
         print(i)
-        #plot_yinf(plt.figure(), i)
+        plot_yinf(plt.figure(), 0, plot_slice=True, plot_lims=((500+i*20, 500+(i+1)*20), None, None))
     #yinf_avg_stats(n_yinf_files = 5, epoch=-1)
-    compare_yinf_stats(plt.figure())
+    #compare_yinf_stats(plt.figure()))
+    #yinf_stats()

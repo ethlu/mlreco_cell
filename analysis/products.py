@@ -129,34 +129,34 @@ def compare_active_pixels(event = 10, pixel_file = sys.argv[1], energy_file=sys.
 
 def compare_true_active(fig, fig_histo, fig_inf, fig_histo_inf, event = 1, downsample=(1,1,1), true_thres = 0, plot_slice=False, plot_lims=None, view_angle=None, plot_histo=True, xy_file = sys.argv[1]):
     voxel_truth, voxel_active, event_info = parse_xy(event, 1/3, xy_file)
-    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres)
 
-    thres, plot_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf = \
-            inference_analysis(voxel_truth, voxel_active, 0, plot_lims, plot_slice)
+    thres, plot_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf, voxel_truth, voxel_active = \
+            inference_analysis(voxel_truth, voxel_active, 0, plot_lims, downsample, plot_slice)
 
-    evt_voxel_FN, evt_voxel_TP, _, evt_voxel_FP = evt_voxels_comp
-    voxel_FN, voxel_TP, _, voxel_FP = voxels_comp_T
+    evt_voxel_FN, evt_voxel_TP, _, _ = evt_voxels_comp
+    voxel_FN, voxel_TP, _, _ = voxels_comp_T
     x_lim, y_lim, z_lim = plot_lims
 
     if fig is not None:
         scatter_voxels_comp(fig, voxels_comp_T, "True [MeV]", "Active [MeV]", plot_slice, view_angle)
-        fig.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig.text(0, 0.95, "True Threshold: %.2f"%true_thres)
         fig.text(0., 0.85, "EVENT STATS: ")
-        fig.text(0., 0.75, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(evt_voxel_TP), voxel_sum(evt_voxel_FP), voxel_sum(evt_voxel_FN)))
+        fig.text(0., 0.75, "E TP: %.2f, E FN: %.2f"%(sum(evt_voxel_TP.values()), sum(evt_voxel_FN.values())))
         fig.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
-        fig.text(0., 0.55, "E TP: %.2f, E FP: %.2f, E FN: %.2f"%(voxel_sum(voxel_TP), voxel_sum(voxel_FP), voxel_sum(voxel_FN)))
+        fig.text(0., 0.55, "E TP: %.2f, E FN: %.2f"%(sum(voxel_TP.values()), sum(voxel_FN.values())))
         fig.suptitle("True vs. Active [Energy]\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig.show()
 
     if fig_histo is not None:
-        histo_voxels_comp(fig_histo, fig_histo.add_subplot(), voxels_comp_T, "True [MeV]", "Active [MeV]")
-        fig_histo.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        histo_voxels_comp(fig_histo, fig_histo.add_subplot(), voxels_comp_T, "True [MeV]", "Active [MeV]", 20)
+        fig_histo.text(0.4, 0.8, "True Threshold: %.2f"%true_thres)
         fig_histo.suptitle("Energy Histo True vs. Active\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig_histo.show()
 
     if fig_inf is not None:
         scatter_voxels_comp(fig_inf, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", plot_slice, view_angle)
-        fig_inf.text(0, 0.95, "True Threshold: %f"%true_thres)
+        fig_inf.text(0, 0.95, "True Threshold: %.2f"%true_thres)
         fig_inf.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
         fig_inf.suptitle("True vs. Active [Channel Val]\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig_inf.show()
@@ -164,13 +164,13 @@ def compare_true_active(fig, fig_histo, fig_inf, fig_histo_inf, event = 1, downs
     if fig_histo_inf is not None:
         ax_comp = fig_histo_inf.add_subplot()
         histo_voxels_comp(fig_histo_inf, ax_comp, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", log_yscale=True)
-        fig_histo_inf.text(0.4, 0.8, "True Threshold: %f"%true_thres)
+        fig_histo_inf.text(0.4, 0.8, "True Threshold: %.2f"%true_thres)
         fig_histo_inf.suptitle("Channel Val Histo \nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig_histo_inf.show()
 
 def plot_pixel_stats(event = 1, true_thres=0, xy_file=sys.argv[1]):
     voxel_truth, voxel_active, event_info = parse_xy(event, 1/3, xy_file)
-    voxel_truth = filter_voxel_val(voxel_truth, true_thres, False)
+    voxel_truth = filter_voxel_val(voxel_truth, true_thres)
 
     voxel_FN, voxel_T_active, _, voxel_FP = comp_voxels(voxel_truth, voxel_active)
 

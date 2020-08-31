@@ -7,12 +7,21 @@ def BCEL1Loss(L1_lambda):
         return BCE(x, y) + L1_lambda*L1(x, torch.zeros(x.shape))
     return Loss
 
-def WeightedBCELoss(negative_weight):
+def ChargeWeightedBCELoss(negative_weight):
     BCE = torch.nn.BCELoss(reduction='none')
     def Loss(x, y):
         labels = torch.where(y>0, torch.ones(y.shape), torch.zeros(y.shape))
         weights = torch.where(y>0, y, torch.full(y.shape, negative_weight))
         return torch.mean(BCE(x, labels)*weights)
+    return Loss
+
+def LabelWeightedBCELoss(positive_weight):
+    BCE = torch.nn.BCELoss(reduction='none')
+    def Loss(x, y):
+        weights = torch.where(y==1,
+                torch.full(y.shape, positive_weight),
+                torch.ones(y.shape))
+        return torch.mean(BCE(x, y)*weights)
     return Loss
 
 def get_loss(loss_name):

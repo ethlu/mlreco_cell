@@ -58,7 +58,7 @@ def main():
         output_dir = os.path.expandvars(output_dir)
         configs_dir = output_dir+'/configs/'
         os.makedirs(configs_dir, exist_ok=True)
-        if not args.verbose:
+        if not args.verbose and rank==0:
             configs_i = [int(f[:-5]) for f in os.listdir(configs_dir)]
             if not configs_i: config_i = 0
             else: config_i = max(configs_i)+1

@@ -4,8 +4,8 @@ from mpl_toolkits import mplot3d
 import matplotlib.pyplot as plt
 from data.util import *
 
-def filter_voxel_val(voxel, thres, none_v=True):
-    return {pt: None if none_v else v for pt, v in voxel.items() if v > thres}
+def filter_voxel_val(voxel, thres):
+    return {pt: v for pt, v in voxel.items() if v > thres}
 
 def filter_voxels_coord(coord_lims, *voxels):
     if coord_lims is None: return voxels
@@ -25,7 +25,7 @@ def downsample_voxels(downsample, *voxels):
             new_coord = []
             for i, factor in enumerate(downsample):
                 if factor == -1: continue
-                new_coord.append(coord[i]//factor)
+                new_coord.append(coord[i]//factor*factor)
             new_coord = tuple(new_coord)
             try:
                 if new_voxel[new_coord] is None:
@@ -56,12 +56,6 @@ def set_voxel_vals(voxel_coords, voxel_vals):
     return {coord : voxel_vals[coord] if coord in voxel_vals else None \
             for coord in voxel_coords}
 
-def voxel_sum(voxel):
-    if voxel_is_none(voxel):
-        return 0
-    else:
-        return sum(voxel.values())
-
 def voxel_to_numpy(voxel, filter_none=True):
     coords = np.array([list(coord) for coord in voxel.keys()])
     vals = np.array(list(voxel.values()))
@@ -79,19 +73,31 @@ def get_voxels_lims(*voxels, default=np.zeros((3, 2))):
     coord_max = np.max(coords, axis=0)+1
     return np.array([coord_min, coord_max]).T
 
-def SP_stats(voxel_T, voxel_P, coords_only=False): 
-    comp = comp_voxels(voxel_T, voxel_P, coords_only)
-    n_T = len(voxel_T)
+def SP_stats(voxel_T, voxel_P, T_weighted=False, get_voxels_comp=True): 
+    if get_voxels_comp:
+        comp = comp_voxels(voxel_T, voxel_P)
+        coords_TP = comp[1].keys()
+    else:
+        coords_TP = set(voxel_T.keys()).intersection(voxel_P.keys())
+    n_TP = len(coords_TP) 
     n_P = len(voxel_P)
-    n_TP = len(comp[1]) 
-    sensitivity = 1 if n_T==0 else n_TP/n_T
+    if T_weighted:
+        T_TP = sum([voxel_T[coord] for coord in coords_TP])
+        T_T = sum(voxel_T.values())
+        sensitivity = 1 if T_TP==0 else T_TP/T_T
+    else:
+        n_T = len(voxel_T)
+        sensitivity = 1 if n_T==0 else n_TP/n_T
     purity = 1 if n_P==0 else n_TP/n_P 
-    return purity, sensitivity, comp
+    if get_voxels_comp:
+        return purity, sensitivity, comp
+    return purity, sensitivity
 
-def SP_curve(voxel_T, voxel_inf, thresholds = np.arange(50)*2E-2):
+def SP_curve(voxel_T, voxel_inf, T_weighted=False, downsample=(1,1,1), thresholds = np.arange(50)*2E-2):
+    voxel_T, = downsample_voxels(downsample, voxel_T)
     xs, ys = [], []
     for thres in thresholds:
-        x, y, _, = SP_stats(voxel_T, filter_voxel_val(voxel_inf, thres), True)
+        x, y = SP_stats(voxel_T, downsample_voxels(downsample, filter_voxel_val(voxel_inf, thres))[0], T_weighted, False)
         xs.append(x)
         ys.append(y)
     return xs, ys, thresholds
@@ -102,13 +108,14 @@ def optim_threshold(SP_curve):
     max_i = np.argmax(sums)
     return thresholds[max_i], xs[max_i], ys[max_i]
 
-def inference_analysis(voxel_T, voxel_inf, thres=None, coord_lims=None, to_slice=False):
+def inference_analysis(voxel_T, voxel_inf, thres=None, coord_lims=None, downsample=(1,1,1), to_slice=False):
     if thres is None:
         thres, _, _ = optim_threshold(SP_curve(voxel_T, voxel_inf))
-    voxel_P = filter_voxel_val(voxel_inf, thres, False)
+    voxel_P = filter_voxel_val(voxel_inf, thres)
     evt_purity, evt_sensitivity, evt_voxels_comp = SP_stats(voxel_T, voxel_P)
 
-    voxel_T, voxel_P = filter_voxels_coord(coord_lims, voxel_T, voxel_P)
+    voxel_T, voxel_P, voxel_inf = filter_voxels_coord(coord_lims, voxel_T, voxel_P, voxel_inf)
+    voxel_T, voxel_P, voxel_inf = downsample_voxels(downsample, voxel_T, voxel_P, voxel_inf)
     if coord_lims is None:
         coord_lims = get_voxels_lims(voxel_T, voxel_P)
     x_lim, y_lim, z_lim = coord_lims
@@ -117,13 +124,14 @@ def inference_analysis(voxel_T, voxel_inf, thres=None, coord_lims=None, to_slice
         coord_lims[0] = x_lim
     coord_lims = tuple(map(tuple, coord_lims))
 
+    if to_slice:
+        voxel_T, voxel_P, voxel_inf = downsample_voxels((-1, 1, 1), voxel_T, voxel_P, voxel_inf)
     voxel_T_inf = set_voxel_vals(voxel_T, voxel_inf)
     voxel_P_T = set_voxel_vals(voxel_P, voxel_T)
-    if to_slice:
-        voxel_T, voxel_T_inf, voxel_P, voxel_P_T = downsample_voxels((-1, 1, 1), voxel_T, voxel_T_inf, voxel_P, voxel_P_T)
     purity, sensitivity, voxels_comp_T = SP_stats(voxel_T, voxel_P_T)
     voxels_comp_inf = comp_voxels(voxel_T_inf, voxel_P)
-    return thres, coord_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf
+    return thres, coord_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, \
+        voxels_comp_T, voxels_comp_inf, voxel_T, voxel_inf
 
 def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lims=None, size=2, cmap=plt.get_cmap('viridis')):
     ax.set_title(name)
@@ -145,7 +153,7 @@ def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lim
             fig.colorbar(ax.scatter(*coords.T, s=size, c=vals, cmap=cmap, label=label), cax = cax)
         else:
             fig.colorbar(ax.scatter3D(*coords.T, s=size, c=vals, cmap=cmap, label=label), cax = cax)
-    ax.legend()
+    ax.legend(loc='lower left', bbox_to_anchor=(0.7, 0.7))
     if is2d:
         if view_angle:
             ax.set_xlabel('Z')
@@ -180,7 +188,7 @@ def scatter_voxels(fig, ax, voxels, names, colors, title="", is2d=False, view_an
     if not is2d and view_angle is not None:
         ax.view_init(*view_angle)
     ax.set_title(title)
-    ax.legend()
+    ax.legend(loc='lower left', bbox_to_anchor=(0.7, 0.7))
     if is2d:
         if view_angle:
             ax.set_xlabel('Z')

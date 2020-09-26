@@ -28,7 +28,7 @@ def yinf_stats(event = 1, true_thres=0, T_weighted=False, downsample=(1,1,1), xy
     voxel_truth, voxel_active, event_info = parse_xy(event, 1, xy_file)
     voxel_truth = filter_voxel_val(voxel_truth, true_thres)
 
-    voxel_FN, voxel_T_active, _, voxel_FP = comp_voxels(voxel_truth, voxel_active)
+    voxel_FN, voxel_T_active, _, voxel_FP = comp_voxels(*downsample_voxels(downsample, voxel_truth, voxel_active))
 
     n_T = len(voxel_truth)
     n_TP_naive = len(voxel_T_active) #naive: treat all active as positive
@@ -36,7 +36,6 @@ def yinf_stats(event = 1, true_thres=0, T_weighted=False, downsample=(1,1,1), xy
 
     voxel_yinf = parse_yinf(event_info, yinf_file)
     xs, ys, thresholds = SP_curve(voxel_T_active, voxel_yinf, T_weighted, downsample)
-
     return xs, ys, thresholds, n_T, n_TP_naive, n_FP_naive
 
 def yinf_avg_stats(n_yinf_files = 10, n_events=50, epoch = -1, true_thres = 0, T_weighted=False, downsample=(1,1,1), stats_dir = "stats", plot = False, xy_dir = sys.argv[1], yinf_dir=sys.argv[2]):
@@ -87,7 +86,7 @@ def yinf_avg_stats(n_yinf_files = 10, n_events=50, epoch = -1, true_thres = 0, T
 
 def compare_yinf_stats(fig, stats_files = sys.argv[1:], labels=None):
     ax = fig.add_subplot()
-    n_T, n_TP_naive, n_FP_naive = [], [], []
+    n_T, n_TP_naive, n_FP_naive, auc = [], [], [], []
     for i, f in enumerate(stats_files):
         if f == "a":
             continue
@@ -95,11 +94,12 @@ def compare_yinf_stats(fig, stats_files = sys.argv[1:], labels=None):
             xs = stats_f["xs"]
             ys = stats_f["ys"]
             if "n_T" in stats_f:
-                n_T.append("%d: %.2f"%(i, stats_f["n_T"]))
+                n_T.append("%d: %.1f"%(i, stats_f["n_T"]))
             else:
-                n_T.append("%d: %.2f"%(i, stats_f["n_P"]))
-            n_TP_naive.append("%d: %.2f"%(i, stats_f["n_TP_naive"]))
-            n_FP_naive.append("%d: %.2f"%(i, stats_f["n_FP_naive"]))
+                n_T.append("%d: %.1f"%(i, stats_f["n_P"]))
+            n_TP_naive.append("%d: %.1f"%(i, stats_f["n_TP_naive"]))
+            n_FP_naive.append("%d: %.1f"%(i, stats_f["n_FP_naive"]))
+            auc.append("%d: %.3f"%(i, SP_score((xs, ys))))
             if labels is None:
                 label = f
             else:
@@ -107,8 +107,9 @@ def compare_yinf_stats(fig, stats_files = sys.argv[1:], labels=None):
             ax.plot(xs, ys, marker='o', label="%d: %s"%(i, label), markersize=2)
 
     ax.text(0.1, 0.5, "N True Voxels: " + ", ".join(n_T), transform = ax.transAxes)
-    ax.text(0.1, 0.4, "N Active & True: "+ ", ".join(n_TP_naive), transform = ax.transAxes)
-    ax.text(0.1, 0.3, "N Active but False : "+ ", ".join(n_FP_naive), transform = ax.transAxes)
+    ax.text(0.1, 0.45, "N Active & True: "+ ", ".join(n_TP_naive), transform = ax.transAxes)
+    ax.text(0.1, 0.4, "N Active but False : "+ ", ".join(n_FP_naive), transform = ax.transAxes)
+    ax.text(0.1, 0.35, "Area under curve: "+ ", ".join(auc), transform = ax.transAxes)
     ax.legend()
     ax.set_xlabel("Purity")
     ax.set_ylabel("Efficiency")

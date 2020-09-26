@@ -1,0 +1,38 @@
+trainer: basic 
+output_dir: $SCRATCH/mlreco_cell/singleElectronWire-downsample(4,2,2)v2_ghost3D-165-LabelWeighted100-p0.9
+
+store_inference:
+#outdir: inf_pion
+    everyNepoch: 2
+    everyNsample: 5
+
+data:
+    name: sparse
+    data_path: $SCRATCH/larsim/reco_1GeV_ElectronWire_downsample4-2-2_xy-v2
+    train_i: [701, 780]
+    #train_i: [701, 701]
+    #inference_i: [901, 950]
+    inference_i: [781, 800]
+    batch_size: 1 
+    threshold: 0.001
+model:
+    name: cellnet_binary
+    spatial_size: [2048, 2048, 1024]
+    nChannels: 16
+    nStrides: 5
+    n_2D: 0
+    conv_kernel: 3
+    downsample_t: [2, 2]
+    momentum: 0.9
+
+loss: 
+    name: LabelWeightedBCELoss 
+    positive_weight: 100
+
+optimizer:
+    name: Adam
+    lr: 0.001
+train:
+    n_epochs: 1000
+metrics:
+    acc: BinAccuracy

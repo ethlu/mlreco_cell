@@ -19,6 +19,7 @@ def parse_xy(event = 1, E_scale = 1, xy_file = sys.argv[1]):
         event_pixels = pix_batch[event_starti:event_endi]
     coords_active = event_pixels[:,:3]
     voxel_active = {tuple(pt[:3]):sum(pt[4:]) for pt in event_pixels}
+    #voxel_active = {tuple(pt[:3]):pt[5] for pt in event_pixels}
     event_truth = energys_truth[event]
     voxel_truth = {tuple(pt[:3]):pt[3]*E_scale for pt in event_truth}
     return voxel_truth, voxel_active, (event_starti, event_endi, coords_active)
@@ -134,7 +135,7 @@ def compare_true_active(fig, fig_histo, fig_inf, fig_histo_inf, event = 1, downs
     thres, plot_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, voxels_comp_T, voxels_comp_inf, voxel_truth, voxel_active = \
             inference_analysis(voxel_truth, voxel_active, 0, plot_lims, downsample, plot_slice)
 
-    evt_voxel_FN, evt_voxel_TP, _, _ = evt_voxels_comp
+    evt_voxel_FN, evt_voxel_TP, _, evt_voxel_FP = evt_voxels_comp
     voxel_FN, voxel_TP, _, _ = voxels_comp_T
     x_lim, y_lim, z_lim = plot_lims
 
@@ -157,13 +158,15 @@ def compare_true_active(fig, fig_histo, fig_inf, fig_histo_inf, event = 1, downs
     if fig_inf is not None:
         scatter_voxels_comp(fig_inf, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", plot_slice, view_angle)
         fig_inf.text(0, 0.95, "True Threshold: %.2f"%true_thres)
+        fig_inf.text(0., 0.85, "EVENT STATS: ")
+        fig_inf.text(0., 0.75, "N TP: %d, N FN: %d, N FP: %d"%(len(evt_voxel_TP), len(evt_voxel_FN), len(evt_voxel_FP)))
         fig_inf.text(0., 0.65, "PLOTTED STATS: "+("(Slice X = %d - %d)"%(x_lim[0], x_lim[1]) if plot_slice else ""))
         fig_inf.suptitle("True vs. Active [Channel Val]\nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig_inf.show()
 
     if fig_histo_inf is not None:
         ax_comp = fig_histo_inf.add_subplot()
-        histo_voxels_comp(fig_histo_inf, ax_comp, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", log_yscale=True)
+        histo_voxels_comp(fig_histo_inf, ax_comp, voxels_comp_inf, "True [Channel Val]", "Active [Channel Val]", 20, log_yscale=True)
         fig_histo_inf.text(0.4, 0.8, "True Threshold: %.2f"%true_thres)
         fig_histo_inf.suptitle("Channel Val Histo \nXY file: %s, Event: %d"%(xy_file[xy_file.rfind('/')+1:], event))
         fig_histo_inf.show()
@@ -178,7 +181,7 @@ def plot_pixel_stats(event = 1, true_thres=0, xy_file=sys.argv[1]):
     n_TP_naive = len(voxel_T_active) #naive: treat all active as positive
     n_FP_naive = len(voxel_FP)
 
-    xs, ys, thresholds = SP_curve(voxel_T_active, voxel_active, np.arange(100)*0.1)
+    xs, ys, thresholds = SP_curve(voxel_T_active, voxel_active, thresholds=np.arange(100)*0.1)
     plt.plot(xs, ys)
     plt.show()
 
@@ -189,4 +192,4 @@ if __name__=="__main__":
         #compare_energys(i)
         #compare_channels(i)
         #compare_true_active(plt.figure(), i)
-        #plot_pixel_stats(i)
+        plot_pixel_stats(i)

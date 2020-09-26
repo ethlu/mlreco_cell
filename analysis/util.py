@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from data.util import *
 
 def filter_voxel_val(voxel, thres):
-    return {pt: v for pt, v in voxel.items() if v > thres}
+    return {pt: v for pt, v in voxel.items() if v >= thres}
 
 def filter_voxels_coord(coord_lims, *voxels):
     if coord_lims is None: return voxels
@@ -78,7 +78,7 @@ def SP_stats(voxel_T, voxel_P, T_weighted=False, get_voxels_comp=True):
         comp = comp_voxels(voxel_T, voxel_P)
         coords_TP = comp[1].keys()
     else:
-        coords_TP = set(voxel_T.keys()).intersection(voxel_P.keys())
+        coords_TP = voxel_T.keys() & voxel_P.keys()
     n_TP = len(coords_TP) 
     n_P = len(voxel_P)
     if T_weighted:
@@ -94,14 +94,32 @@ def SP_stats(voxel_T, voxel_P, T_weighted=False, get_voxels_comp=True):
     return purity, sensitivity
 
 def SP_curve(voxel_T, voxel_inf, T_weighted=False, downsample=(1,1,1), thresholds = np.arange(50)*2E-2):
-    voxel_T, = downsample_voxels(downsample, voxel_T)
     xs, ys = [], []
-    for thres in thresholds:
-        x, y = SP_stats(voxel_T, downsample_voxels(downsample, filter_voxel_val(voxel_inf, thres))[0], T_weighted, False)
-        xs.append(x)
-        ys.append(y)
+    if not T_weighted and downsample == (1,1,1):
+        coords = voxel_inf.keys()
+        infs = np.array(list(voxel_inf.values()))
+        truths = np.array([1 if coord in voxel_T else 0 for coord in coords])
+        n_T = len(voxel_T)
+        for thres in thresholds:
+            preds = np.where(infs>thres, 1, 0)
+            n_P = np.sum(preds)
+            n_TP = np.sum(preds[preds == truths])
+            xs.append(1 if n_P==0 else n_TP/n_P)
+            ys.append(1 if n_T==0 else n_TP/n_T)
+    else:
+        voxel_T, = downsample_voxels(downsample, voxel_T)
+        for thres in thresholds:
+            x, y = SP_stats(voxel_T, downsample_voxels(downsample, filter_voxel_val(voxel_inf, thres))[0], T_weighted, False)
+            xs.append(x)
+            ys.append(y)
     return xs, ys, thresholds
 
+def SP_score(SP_curve):
+    purity = SP_curve[0]
+    sensitivity = SP_curve[1]
+    delta_sens = sensitivity - np.concatenate((sensitivity[1:], [0]))
+    return delta_sens@purity
+    
 def optim_threshold(SP_curve):
     xs, ys, thresholds = SP_curve
     sums = np.array(xs) + np.array(ys)
@@ -162,19 +180,21 @@ def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lim
             ax.set_xlabel('Y')
             ax.set_ylabel('Z')
         fig.subplots_adjust(left=0.25, hspace=0.7)
-        x_lim, y_lim = plot_lims
-        ax.set_xlim(*x_lim)
-        ax.set_ylim(*y_lim)
+        if plot_lims is not None:
+            x_lim, y_lim = plot_lims
+            ax.set_xlim(*x_lim)
+            ax.set_ylim(*y_lim)
     else:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
         if view_angle is not None:
             ax.view_init(*view_angle)
-        x_lim, y_lim, z_lim = plot_lims
-        ax.set_xlim(*x_lim)
-        ax.set_ylim(*y_lim)
-        ax.set_ylim(*z_lim)
+        if plot_lims is not None:
+            x_lim, y_lim, z_lim = plot_lims
+            ax.set_xlim(*x_lim)
+            ax.set_ylim(*y_lim)
+            ax.set_zlim(*z_lim)
 
 def scatter_voxels(fig, ax, voxels, names, colors, title="", is2d=False, view_angle=None, size=2, alpha=0.4):
     for i, voxel in enumerate(voxels):

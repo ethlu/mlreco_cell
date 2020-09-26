@@ -139,6 +139,10 @@ class BaseTrainer(object):
         """Virtual method to evaluate a model"""
         raise NotImplementedError
 
+    def schedule(self, eval_out):
+        """Virtual method to update learning rate"""
+        raise NotImplementedError
+
     def train(self, train_data_loader, n_epochs, valid_data_loader=None):
         """Run the model training"""
 
@@ -167,6 +171,11 @@ class BaseTrainer(object):
                     for (k, v) in valid_summary.items():
                         summary[f'valid_{k}'] = v
                     self.save_inference(outputs, i)
+
+                try:
+                    self.schedule(valid_summary)
+                except (NotImplementedError, UnboundLocalError):
+                    pass
 
                 # Save summary, checkpoint
                 self.save_summary(summary)

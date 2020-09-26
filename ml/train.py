@@ -82,11 +82,14 @@ def main():
     gpu = (rank % args.ranks_per_node) if args.rank_gpu else args.gpu
     if gpu is not None:
         logging.info('Using GPU %i', gpu)
-    trainer = get_trainer(name=config['trainer'], distributed=distributed,
+    trainer = get_trainer(name=config['trainer'].pop('name') \
+                          if isinstance(config['trainer'], dict) else config['trainer'],
+                          distributed=distributed,
                           rank=rank, output_dir=output_dir, gpu=gpu, 
                           store_inference=config.get('store_inference', False))
 
     # Build the model and optimizer
+    config['n_ranks'] = n_ranks
     trainer.build(config)
 
     # Resume from checkpoint

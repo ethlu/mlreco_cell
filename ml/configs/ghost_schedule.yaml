@@ -1,0 +1,36 @@
+output_dir: $SCRATCH/mlreco_cell/singleElectronWire-90k_ghost3D-164-lr0.02_schedule
+store_inference:
+    everyNepoch: 2
+    everyNsample: 5
+
+trainer: 
+    name: schedule_plateau
+    metric: acc
+    patience: 2
+    factor: 0.2
+
+data:
+    name: sparse
+    data_path: $SCRATCH/larsim/reco_1GeV_ElectronWire_xy
+    train_i: [1, 900]
+    inference_i: [901, 950]
+    batch_size: 1 
+    threshold: 0.001
+model:
+    name: cellnet_binary
+    spatial_size: [1024, 1024, 512]
+    nChannels: 16
+    nStrides: 4
+    n_2D: 0
+    downsample_t: [2, 2]
+
+loss: 
+    name: BCELoss 
+
+optimizer:
+    name: Adam
+    lr: 0.02
+train:
+    n_epochs: 1000
+metrics:
+    acc: BinAccuracy

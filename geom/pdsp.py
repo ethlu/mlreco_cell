@@ -4,7 +4,7 @@ import numpy as np
 
 TPC_LENGTH = 3585
 DRIFT_SPEED = 1.565 #mm/us, from detsim.fcl
-T0 = 250 #us, a guess
+T0 = 252 #us, a guess
 SAMPLING_RATE = 2 #MHz
 DRIFT_PER_TICK = DRIFT_SPEED/SAMPLING_RATE
 APA_HEIGHT = 5984
@@ -18,7 +18,7 @@ PIXEL_SIZE = 2
 VOXEL_SIZE = (DRIFT_PER_TICK, PIXEL_SIZE, PIXEL_SIZE)
 
 FACE1 = os.path.join(dirname, "geom_pdsp_face1.npz")
-FACE2 = os.path.join(dirname, "geom_pdsp_face2.npz")
+FACE2 = os.path.join(dirname, "geom_pdsp_face2-v2.npz")
 
 def get_TPC_box(tpc_num = 1): #offline TPC number
     assert tpc_num in np.arange(12)
@@ -104,6 +104,38 @@ def make_APA_geom(face):
         return Geom.create(np.concatenate(list(Face1.values())), tiling, 2560)
     return Geom.create(np.concatenate(list(Face2.values())), tiling, 2560)
 
+def make_APA_geom_larsoft_face2():
+    from tiling.pixel import Geom
+    from tiling.square import shift_wires_origin, wrap_fixed_pitch_wires
+    UV_PITCH = 4.669 
+    X_PITCH = 4.79 
+    R0 = (APA_Z0/PIXEL_SIZE, APA_Y/PIXEL_SIZE)
+    tiling = (0, APA_WIDTH//PIXEL_SIZE, 0, APA_HEIGHT//PIXEL_SIZE) 
+        
+    def u_wmap(w):
+        if w < 400:
+            return 400+w
+        return w-400
+    U_WIRE = shift_wires_origin(
+            (-35.7, UV_PITCH/PIXEL_SIZE, -3535.01/PIXEL_SIZE, 1148, u_wmap),
+            (0, 0), R0)
+
+    def v_wmap(w):
+        if w < 748:
+            return 1547-w
+        return 1599-w
+    V_WIRE = shift_wires_origin(
+            (35.7, UV_PITCH/PIXEL_SIZE, 49.8/PIXEL_SIZE, 1148, v_wmap),
+            (0, 0), R0)
+
+    X_WIRE = shift_wires_origin(
+            (0, X_PITCH/PIXEL_SIZE, 5.6/PIXEL_SIZE, 480, lambda w: w+2080),
+            (0, 0), R0)
+
+    return Geom.create([U_WIRE, V_WIRE, X_WIRE], tiling, 2560)
+
+
+    
 def make_APA_geom_larsoft(face):
     """Too complicated to get it exactly right, use 'simple' model for now..."""
     APA_HEIGHT = 5991

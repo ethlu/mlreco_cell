@@ -17,7 +17,14 @@ def filter_voxels_coord(coord_lims, *voxels):
         ret.append(voxel)
     return ret 
 
-def downsample_voxels(downsample, *voxels):
+def filter_voxels_coords(coords, *voxels):
+    ret = []
+    coords = set(coords)
+    for voxel in voxels:
+        ret.append({c:voxel[c] for c in voxel if c in coords})
+    return ret 
+
+def downsample_voxels(downsample, *voxels, reduce=False, avg=False):
     ret = []
     for voxel in voxels:
         new_voxel = {}
@@ -25,15 +32,20 @@ def downsample_voxels(downsample, *voxels):
             new_coord = []
             for i, factor in enumerate(downsample):
                 if factor == -1: continue
-                new_coord.append(coord[i]//factor*factor)
+                new_coord.append(coord[i]//factor if reduce else coord[i]//factor*factor)
             new_coord = tuple(new_coord)
             try:
                 if new_voxel[new_coord] is None:
-                    new_voxel[new_coord] = val
+                    new_voxel[new_coord] = [val, 1]
                 elif val is not None:
-                    new_voxel[new_coord] += val
+                    new_voxel[new_coord][0] += val
+                    new_voxel[new_coord][1] += 1
             except KeyError:
-                new_voxel[new_coord] = val
+                new_voxel[new_coord] = [val, 1]
+        if avg:
+            new_voxel = {k: v[0]/v[1] for k, v in new_voxel.items()}
+        else:
+            new_voxel = {k: v[0] for k, v in new_voxel.items()}
         ret.append(new_voxel)
     return ret
 
@@ -56,7 +68,7 @@ def set_voxel_vals(voxel_coords, voxel_vals):
     return {coord : voxel_vals[coord] if coord in voxel_vals else None \
             for coord in voxel_coords}
 
-def voxel_to_numpy(voxel, filter_none=True):
+def voxel_to_numpy(voxel):
     coords = np.array([list(coord) for coord in voxel.keys()])
     vals = np.array(list(voxel.values()))
     return coords, vals
@@ -72,6 +84,154 @@ def get_voxels_lims(*voxels, default=np.zeros((3, 2))):
     coord_min = np.min(coords, axis=0)
     coord_max = np.max(coords, axis=0)+1
     return np.array([coord_min, coord_max]).T
+
+def mode1d(X):
+    counts = {}
+    for x in X:
+        if x in counts:
+            counts[x] += 1
+        else:
+            counts[x] = 1
+    return max(counts.items(), key=lambda x: x[1])[0]
+    
+def track_stats(coords, fig=None):
+    from sklearn.decomposition import PCA
+    from numpy import arctan, arccos, degrees
+    if len(coords) < 20: return None
+    pca = PCA()
+    coords = np.array(coords)
+    pca.fit(coords)
+    if fig is not None:
+        ax=fig.add_subplot(projection="3d") 
+        scatter_voxel(fig, ax, {tuple(c):None for c in coords})
+        ax.quiver(*np.mean(coords, axis=0), *(20*pca.components_[0].T))
+        plt.show()
+    axis = np.flip(pca.components_[0])
+    phi = degrees(arctan(axis[1]/axis[0]))
+    phi = phi+180 if phi<0 else phi
+    theta = degrees(arccos(axis[2]))
+    theta = theta+180 if theta<0 else theta
+    #print("explained",pca.explained_variance_)
+    #print("singuar",pca.singular_values_)
+    return theta, phi, pca.explained_variance_ratio_[0]
+
+def track_fit(voxel_track, coord_start=None, voxel_size=(1, 1, 1), step=1, max_deviation=20, pca_thres=0.98, pca_nrange=(5, 100), fig=None):
+    from sklearn.decomposition import PCA
+    from sklearn.cluster import DBSCAN
+    pca = PCA()
+    if type(step) == tuple:
+        step_range = step
+    else:
+        step_range = (step, step+np.linalg.norm(voxel_size))
+    coords, _ = voxel_to_numpy(voxel_track)
+    cluster_labels = DBSCAN(eps=max_deviation, min_samples=pca_nrange[0]*5).fit_predict(coords*voxel_size) 
+    if np.count_nonzero(cluster_labels==-1) > len(voxel_track)/2:
+        cluster_labels = DBSCAN(eps=max_deviation, min_samples=pca_nrange[0]).fit_predict(coords*voxel_size) 
+    voxel = filter_voxels_coords(map(tuple, coords[cluster_labels!=-1]), voxel_track)[0]
+    """
+    print("DBSCAN filtered out %d samples, found %d clusters"%(len(voxel_track)-len(voxel), len(np.unique(cluster_labels))-1))
+    if fig is not None:
+        labels = np.unique(cluster_labels)
+        fig_ = plt.figure()
+        scatter_voxels(fig_, fig_.add_subplot(projection="3d"), 
+                       [{tuple(coord): None for coord in coords[cluster_labels==label]} for label in labels], list(map(str, labels)))
+    """
+    if coord_start is None:
+        coords, _ = voxel_to_numpy(voxel)
+        coord_start = coords[np.argmax(coords[:, 1])]
+    coord_start_copy = coord_start = np.array(coord_start)
+    track_ranges, track_vals = [0], []
+    voxel_range, pca_vectors = {}, []
+    coords_this = []
+    while len(voxel) >= pca_nrange[0]:
+        coords = voxel_to_numpy(voxel)[0]
+        coords_sorted = coords[np.argsort(np.linalg.norm((coords-coord_start)*voxel_size, axis=1))]
+        coords_pca = coords_sorted[:pca_nrange[1]]
+        reset = False
+        while True:
+            pca.fit(coords_pca * voxel_size)
+            if pca.explained_variance_ratio_[0] < pca_thres:
+                if len(coords_pca) > pca_nrange[0]: 
+                    coords_pca = coords_sorted[: max(len(coords_pca)-pca_nrange[0], pca_nrange[0])]
+                    continue
+                if coords_this:
+                    old_ratio = pca.explained_variance_ratio_[0]
+                    pca.fit(np.concatenate((coords_pca, coords_this)) * voxel_size)
+                    if pca.explained_variance_ratio_[0] < old_ratio:
+                        pca.fit(coords_pca * voxel_size)
+            elif len(voxel) - len(coords_pca) < pca_nrange[0]:
+                coords_pca = coords
+            coords_rel = (coords_pca - coord_start)*voxel_size
+            dists_parallel = coords_rel@pca.components_[0]
+            mask_pos, mask_neg = dists_parallel > step_range[0], dists_parallel < -step_range[0]
+            count_pos, count_neg = np.count_nonzero(mask_pos), np.count_nonzero(mask_neg)
+            if count_pos >= count_neg and count_neg:
+                assert count_neg < pca_nrange[0], "PCA detected %d samples in wrong direction"%count_neg
+                for coord in coords_pca[mask_neg]: voxel.pop(tuple(coord), None)
+                reset = True
+                break
+            if count_pos < count_neg and count_pos:
+                assert count_pos < pca_nrange[0], "PCA detected %d samples in wrong direction"%count_pos
+                for coord in coords_pca[mask_pos]: voxel.pop(tuple(coord), None)
+                reset = True
+                break
+            dists_transverse = np.linalg.norm(coords_rel - np.outer(dists_parallel, pca.components_[0]), axis=1)
+            dists_parallel_abs = np.abs(dists_parallel) + track_ranges[-1]
+            dists_sorted = np.argsort(dists_parallel_abs)
+            dists_parallel_abs, dists_transverse, coords_pca = dists_parallel_abs[dists_sorted], dists_transverse[dists_sorted], coords_pca[dists_sorted]
+            break_i = np.argmax(np.diff(dists_parallel_abs) > step_range[1])
+            coord_end = coords_pca[break_i if break_i else -1]
+            if fig is not None: pca.fit(coords_pca)
+            pca_vectors.append((coord_start, pca.components_[0]*(1 if count_pos>count_neg else -1)))
+            break
+        if reset: continue
+        coords_this, vals_this, is_last = [], [], False
+        for dist_parallel_abs, dist_transverse, coord in zip(dists_parallel_abs, dists_transverse, map(tuple, coords_pca)):
+            if dist_parallel_abs >= dists_parallel_abs[-1] - step_range[1]:
+                is_last = True
+            step_size = dist_parallel_abs - track_ranges[-1] 
+            if step_size > step_range[0]:
+                if step_size > step_range[1]: 
+                    del track_ranges[-1]
+                else:
+                    track_vals.append(np.sum(vals_this)/step_size)
+                    for c in coords_this:
+                        voxel_range[c] = track_ranges[-1]
+                track_ranges.append(dist_parallel_abs)
+                if is_last:
+                    coord_start = coord
+                    break
+                coords_this.clear()
+                vals_this.clear()
+            if dist_transverse <= max_deviation:
+                coords_this.append(coord)
+                vals_this.append(voxel[coord])
+            del voxel[coord]
+    del track_ranges[-1]
+    if fig is not None:
+        if fig is True: fig = plt.figure()
+        ax=fig.add_subplot(211, projection="3d") 
+        coords_filtered, vals_filtered = voxel_to_numpy(comp_voxels(voxel_track, voxel_range)[0])
+        ax.scatter3D(*coords_filtered.T, s=3, 
+                     label="filtered \nN: %d, Total Val: %.1f"%(len(coords_filtered), sum(vals_filtered)), c='r', marker='^')
+        ax.scatter3D(*coord_start_copy, s=50, label="start", c='g', marker='^')
+        ax.scatter3D(*coord_end, s=50, label="end", c='purple', marker='^')
+        ax.scatter3D(*voxel_to_numpy(voxel_range)[0].T, s=2, c=voxel_to_numpy(voxel_range)[1],
+                     label="Fitted Track \nN: %d, Total Val: %.1f"%(len(voxel_range), sum(comp_voxels(voxel_track, voxel_range)[1].values())))
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.legend()
+        track_size = np.linalg.norm(get_voxels_lims(voxel_track)[:, 1] - get_voxels_lims(voxel_track)[:, 0])
+        step_size = step_range[1] / np.linalg.norm(voxel_size)
+        for pt, direction in pca_vectors:
+            ax.quiver(pt[0], pt[1], pt[2]+track_size/10, *(step_size*track_size/50*direction.T))
+        ax2=fig.add_subplot(212) 
+        ax2.scatter(track_ranges, track_vals)
+        ax2.set_xlabel("Range")
+        ax2.set_ylabel("Val density")
+        plt.show()
+    return track_ranges, track_vals, coord_end, (voxel_range, pca_vectors)
 
 def SP_stats(voxel_T, voxel_P, T_weighted=False, get_voxels_comp=True): 
     if get_voxels_comp:
@@ -107,11 +267,22 @@ def SP_curve(voxel_T, voxel_inf, T_weighted=False, downsample=(1,1,1), threshold
             xs.append(1 if n_P==0 else n_TP/n_P)
             ys.append(1 if n_T==0 else n_TP/n_T)
     else:
-        voxel_T, = downsample_voxels(downsample, voxel_T)
         for thres in thresholds:
             x, y = SP_stats(voxel_T, downsample_voxels(downsample, filter_voxel_val(voxel_inf, thres))[0], T_weighted, False)
             xs.append(x)
             ys.append(y)
+    """
+    xs, ys = [], []
+    n_T = len(voxel_T)
+    n_F = len(comp_voxels(voxel_T, voxel_inf)[3])
+    for thres in thresholds:
+        vox_P =  filter_voxel_val(voxel_inf, thres)
+        n_TP = len(voxel_T.keys() & vox_P.keys())
+        x = 1 - (len(vox_P) - n_TP)/n_F
+        y = n_TP/n_T
+        xs.append(x)
+        ys.append(y)
+    """
     return xs, ys, thresholds
 
 def SP_score(SP_curve):
@@ -151,7 +322,7 @@ def inference_analysis(voxel_T, voxel_inf, thres=None, coord_lims=None, downsamp
     return thres, coord_lims, evt_purity, evt_sensitivity, evt_voxels_comp, purity, sensitivity, \
         voxels_comp_T, voxels_comp_inf, voxel_T, voxel_inf
 
-def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lims=None, size=2, cmap=plt.get_cmap('viridis')):
+def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lims=None, size=2, cmap=plt.get_cmap('viridis'), cax=None):
     ax.set_title(name)
     if not voxel: return
     coords, vals = voxel_to_numpy(voxel)
@@ -165,10 +336,15 @@ def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lim
     else:
         label=label+"\nTotal Val: %.2f"%sum(vals)
         pos = ax.get_position()
-        cax = fig.add_axes([pos.x1, pos.y0, 0.02, pos.y1-pos.y0])
+        if cax is None:
+            cax = fig.add_axes([pos.x1, pos.y0, 0.02, pos.y1-pos.y0])
         if is2d:
             coords = coords[:, ::-1] if view_angle else coords
-            fig.colorbar(ax.scatter(*coords.T, s=size, c=vals, cmap=cmap, label=label), cax = cax)
+            if cax: 
+                fig.colorbar(ax.scatter(*coords.T, s=size, c=vals, cmap=cmap, label=label), cax = cax)
+            else:
+                #ax.scatter(*coords.T, s=size, c=vals, cmap=cmap, vmax=500, label=label)
+                ax.scatter(*coords.T, s=size, c=vals, cmap=cmap, label=label)
         else:
             fig.colorbar(ax.scatter3D(*coords.T, s=size, c=vals, cmap=cmap, label=label), cax = cax)
     ax.legend(loc='lower left', bbox_to_anchor=(0.7, 0.7))
@@ -196,15 +372,15 @@ def scatter_voxel(fig, ax, voxel, name="", is2d=False, view_angle=None, plot_lim
             ax.set_ylim(*y_lim)
             ax.set_zlim(*z_lim)
 
-def scatter_voxels(fig, ax, voxels, names, colors, title="", is2d=False, view_angle=None, size=2, alpha=0.4):
+def scatter_voxels(fig, ax, voxels, names, colors=None, title="", is2d=False, view_angle=None, size=2, alpha=0.4):
     for i, voxel in enumerate(voxels):
         if not voxel: continue
         coords, vals = voxel_to_numpy(voxel)
         if is2d:
             coords = coords[:, ::-1] if view_angle else coords
-            ax.scatter(*coords.T, s=size, label=names[i], c=colors[i], alpha=alpha)
+            ax.scatter(*coords.T, s=size, label=names[i], c=colors[i] if colors else None, alpha=alpha)
         else:
-            ax.scatter3D(*coords.T, s=size, label=names[i], c=colors[i])
+            ax.scatter3D(*coords.T, s=size, label=names[i], c=colors[i] if colors else None)
     if not is2d and view_angle is not None:
         ax.view_init(*view_angle)
     ax.set_title(title)
@@ -245,6 +421,7 @@ def scatter_voxels_comp(fig, voxels_comp, name_A="A", name_B="B", is2d=False, vi
 def histo_voxels(fig, ax, voxels, labels, colors, title="", bins=None, log_yscale=False):
     data = [voxel_to_numpy(voxel)[1] for voxel in voxels]
     labels = [label+"\nN/Sum: %d/%.2f"%(len(vals), sum(vals)) for label, vals in zip(labels, data)]
+        
     _, bins, _ = ax.hist(data, histtype='step', label=labels, color=colors, bins=bins)
     ax.set_xticks(bins)
     ax.legend()
@@ -268,6 +445,30 @@ def histo_voxels_comp(fig, ax, voxels_comp, name_A="A", name_B="B", bins=None, l
     else:
         ax.set_title(title)
 
-    fig.text(0.4, 0.7, "N %s Voxels: %d"%(name_A, len(voxel_missing_from_A)+len(voxel_intersect)))
-    fig.text(0.4, 0.65, "N %s Voxels: %d"%(name_B, len(voxel_missing_from_B)+len(voxel_intersect)))
+    ax.text(0.4, 0.7, "N %s Voxels: %d"%(name_A, len(voxel_missing_from_A)+len(voxel_intersect)), transform=ax.transAxes)
+    ax.text(0.4, 0.65, "N %s Voxels: %d"%(name_B, len(voxel_missing_from_B)+len(voxel_intersect)), transform=ax.transAxes)
 
+def plot_voxel_projection(fig, voxel, size=0.1, tpc=1):
+    from geom.pdsp import get_APA_wireplane_maps, get_APA_wireplane_projectors, MAX_TICK
+    umap, vmap, xmap, = get_APA_wireplane_maps(tpc)
+    uproj, vproj, xproj = get_APA_wireplane_projectors(tpc)
+    voxel_u, voxel_v, voxel_x = {}, {}, {}
+    for coord, val in voxel.items():
+        coord_u = (int(coord[0]), uproj((coord[2], coord[1])))
+        if coord_u in voxel_u:
+            voxel_u[coord_u] += val
+        else:
+            voxel_u[coord_u] = val
+        coord_v = (int(coord[0]), vproj((coord[2], coord[1])))
+        if coord_v in voxel_v:
+            voxel_v[coord_v] += val
+        else:
+            voxel_v[coord_v] = val
+        coord_x = (int(coord[0]), xproj((coord[2], coord[1])))
+        if coord_x in voxel_x:
+            voxel_x[coord_x] += val
+        else:
+            voxel_x[coord_x] = val
+    scatter_voxel(fig, fig.add_subplot(131), voxel_u, is2d=True, view_angle=True, cax=False, size=size)
+    scatter_voxel(fig, fig.add_subplot(132), voxel_v, is2d=True, view_angle=True, cax=False, size=size)
+    scatter_voxel(fig, fig.add_subplot(133), voxel_x, is2d=True, view_angle=True, cax=False, size=size)

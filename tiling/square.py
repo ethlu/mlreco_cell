@@ -12,6 +12,8 @@ def wireplane_overlap(wire_plane, tiling):
     min_x, max_x, min_y, max_y = tiling 
     num_wires = len(bound_offsets) - 1
     print("computing overlaps for wire plane of angle: {}, num wires: {}".format(angle, num_wires))
+    print("min wire channel: ", w_map(0))
+    print("max wire channel: ", w_map(num_wires-1))
 
     cos = round(np.cos(np.radians(angle)), 2*PRECISION)
     sin = round(np.sin(np.radians(angle)), 2*PRECISION)
@@ -233,6 +235,9 @@ def wrap_fixed_pitch_wires(seed_wires, tiling):
 
     crawl_up(angle, e2, wire_0_offset, num_wires, w_map)
     crawl_down(angle, e2, wire_0_offset, num_wires, w_map)
+    num = 0
+    for wire in wrapped_wires:
+        num+=wire[3]
     return wrapped_wires
 
 def shift_wires_origin(wires, old_origin, new_origin):

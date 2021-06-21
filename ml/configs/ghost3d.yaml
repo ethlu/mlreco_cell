@@ -1,5 +1,5 @@
 trainer: basic 
-output_dir: $SCRATCH/mlreco_cell/singleElectronWire_ghost3D-164
+output_dir: $SCRATCH/mlreco_cell/singleE-BeamCosmic-tpc1_ghost3D-164-lr0.01
 
 store_inference:
 #outdir: inf_pion
@@ -8,10 +8,10 @@ store_inference:
 
 data:
     name: sparse
-    data_path: $SCRATCH/larsim/reco_1GeV_ElectronWire_xy
-    train_i: [1, 100]
-    inference_i: [101, 150]
-    #inference_i: [0, 10]
+    data_path: [$SCRATCH/larsim/reco_1GeV_ElectronWire_xy-v3_3, $SCRATCH/larsim/reco_1GeV_BeamCosmic_xy]
+    train_i: [[701, 950], [101, 840]]
+    inference_i: [[951, 1000], [0,100]]
+    tpcs: [null, [1]]
     batch_size: 1 
     threshold: 0.001
 model:
@@ -24,10 +24,9 @@ model:
 
 loss: 
     name: BCELoss 
-
 optimizer:
     name: Adam
-    lr: 0.001
+    lr: 0.01
 train:
     n_epochs: 1000
 metrics:

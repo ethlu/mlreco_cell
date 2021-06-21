@@ -60,13 +60,14 @@ class BasicTrainer(BaseTrainer):
             optimizer=self.optimizer.state_dict(),
         )
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict, transfer=False):
         """Load state dict from checkpoint"""
         if self.distributed:
-            self.model.module.load_state_dict(state_dict['model'])
+            self.model.module.load_state_dict(state_dict['model'], not transfer)
         else:
-            self.model.load_state_dict(state_dict['model'])
-        self.optimizer.load_state_dict(state_dict['optimizer'])
+            self.model.load_state_dict(state_dict['model'], not transfer)
+        if not transfer:
+            self.optimizer.load_state_dict(state_dict['optimizer'])
 
     def train_epoch(self, data_loader):
         """Train for one epoch"""
@@ -80,7 +81,10 @@ class BasicTrainer(BaseTrainer):
         # Loop over training batches
         for i, (batch_input, batch_target, batch_info) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
-            batch_target = batch_target.to(self.device)
+            try:
+                batch_target = batch_target.to(self.device)
+            except Exception:
+                pass
             self.model.zero_grad()
             batch_output = self.model(batch_input)
             batch_loss = self.loss_func(batch_output, batch_target)
@@ -106,25 +110,37 @@ class BasicTrainer(BaseTrainer):
         # Reset metrics
         sum_loss = 0
         utils.metrics.reset_metrics(self.metrics)
+        inference_only = False
 
         # Loop over batches
         batch_outputs = []
         for i, (batch_input, batch_target, batch_info) in enumerate(data_loader):
             batch_input = batch_input.to(self.device)
-            batch_target = batch_target.to(self.device)
             batch_output = self.model(batch_input)
-            batch_loss = self.loss_func(batch_output, batch_target).item()
-            sum_loss += batch_loss
-            utils.metrics.update_metrics(self.metrics, batch_output, batch_target)
-            self.logger.debug('batch %i loss %.3f', i, batch_loss)
+            if torch.is_tensor(batch_target) and len(batch_target.shape)==1 and batch_target[0] == -1:
+                inference_only = True
+                self.logger.debug('batch %i (loss unknown)', i)
+            else:
+                try:
+                    batch_target = batch_target.to(self.device)
+                except Exception:
+                    pass
+                batch_loss = self.loss_func(batch_output, batch_target).item()
+                sum_loss += batch_loss
+                utils.metrics.update_metrics(self.metrics, batch_output, batch_target)
+                self.logger.debug('batch %i loss %.3f', i, batch_loss)
             batch_outputs.append((batch_info, batch_output))
             
-        # Summarize validation metrics
-        metrics_summary = utils.metrics.get_results(self.metrics)
+        if not inference_only:
+            # Summarize validation metrics
+            metrics_summary = utils.metrics.get_results(self.metrics)
 
-        valid_loss = sum_loss / (i + 1)
-        self.logger.debug('Processed %i samples in %i batches',
-                          len(data_loader.sampler), i + 1)
+            valid_loss = sum_loss / (i + 1)
+            self.logger.debug('Processed %i samples in %i batches',
+                              len(data_loader.sampler), i + 1)
+        else: 
+            valid_loss = -1
+            metrics_summary = {}
 
         # Return summary
         return dict(loss=valid_loss, **metrics_summary), batch_outputs

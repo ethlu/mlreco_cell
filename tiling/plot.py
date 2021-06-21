@@ -131,7 +131,45 @@ def plot_merged_wireplane(wire_sets, tiling):
 
 def plot_pixelator(wire_sets, tiling, channel_vals):
     min_x, max_x, min_y, max_y = tiling
+    ax = plot_wiresets(wire_sets, tiling, channel_vals)
+    #pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = True)
+    #pix_numba = pix.to_numba()
+    #img = pix_numba([channel_vals])[0]
+    pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), sparse_output = True)
+    img = pix(channel_vals)
+    img = pix.sparse_to_dense(img)
+    x = np.arange(min_x, max_x)
+    y = np.arange(min_y, max_y)
+    pts = itertools.product(x, y)
+    for x, y in pts:
+        ax.text(x+0.2, y + 0.5, [round(i, 3) for i in img[x+min_x, y+min_y]], size=5)
 
+    #ax.legend(bbox_to_anchor=(.9, 1.05))
+    ax.legend()
+    plt.show()
+
+def plot_solver(wire_sets, tiling, channel_vals, pixels=None, downsample=(1,1)):
+    from geom.util import voxelize
+    min_x, max_x, min_y, max_y = tiling
+    ax = plot_wiresets(wire_sets, tiling, channel_vals)
+    #pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = True)
+    #pix_numba = pix.to_numba()
+    #img = pix_numba([channel_vals])[0]
+    solver = pixel.Solver(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), downsample)
+    if pixels is None:
+        pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), sparse_output = True)
+        pixels = pix(channel_vals)[:, :2]
+        pixels = voxelize(pixels, downsample).astype(np.int)
+    vals = solver(channel_vals, pixels)
+    for val, (x, y) in zip(vals, pixels):
+        ax.text(x*downsample[0]+0.2, y*downsample[1] + 0.5, round(val, 3), size=8)
+
+    #ax.legend(bbox_to_anchor=(.9, 1.05))
+    ax.legend()
+    plt.show()
+
+def plot_wiresets(wire_sets, tiling, channel_vals):
+    min_x, max_x, min_y, max_y = tiling
     x = np.arange(min_x, max_x+1)
     y = np.arange(min_y, max_y+1)
     pts = itertools.product(x, y)
@@ -182,24 +220,9 @@ def plot_pixelator(wire_sets, tiling, channel_vals):
 
             maxlen = np.linalg.norm((max_x-min_x, max_y-min_y))
             ax.add_patch(Rectangle(lower_l, pitch, 5*maxlen, angle, color = cmap(channel_vals[w_map(w)]/10), alpha=0.5))
-
-    pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), active_none = True)
-    pix_numba = pix.to_numba()
-    img = pix_numba([channel_vals])[0]
-    #pix = pixel.Pixelator(pixel.Geom.create(wire_sets, tiling, len(channel_vals)), sparse_output = True)
-    img = pix.sparse_to_dense(img, True)
-    x = np.arange(min_x, max_x)
-    y = np.arange(min_y, max_y)
-    pts = itertools.product(x, y)
-    for x, y in pts:
-        ax.text(x+0.2, y + 0.5, [round(i, 3) for i in img[x+min_x, y+min_y]], size=5)
-
     colors = cmap(np.arange(cmap.N))
     axes[1].imshow([colors], extent=[0, 10, 0, 1])
-
-    #ax.legend(bbox_to_anchor=(.9, 1.05))
-    ax.legend()
-    plt.show()
+    return ax
 
 #print(plot_simple_overlap((90, 1.8, -5.1, 7, lambda w: w-3), (-5, 5, -5, 5)))
 #print(plot_simple_overlap((45, math.sqrt(2)+0.0001, 0, 5, square.IDENTITY), (-5, 5, -10, 10)))
@@ -219,4 +242,5 @@ np.random.shuffle(channel_vals2)
 channel_vals3 = [0,2, 9, 6]
 np.random.shuffle(channel_vals3)
 #plot_pixelator([(0, 1, 0.5, 4, IDENTITY), (90, 1, 0.5, 4, lambda w: w+4)], (0, 4, 0, 4), np.append(channel_vals, channel_vals2))
-plot_pixelator([(60, 2, -3.501, 4, IDENTITY), (-60, 2, -3.501, 4, lambda w: w+4), (0, 2,-3, 4, lambda w: w+8)], (-4, 4, -4, 4), np.concatenate((channel_vals, channel_vals2, channel_vals3)))
+#plot_pixelator([(60, 2, -3.501, 4, IDENTITY), (-60, 2, -3.501, 4, lambda w: w+4), (0, 2,-3, 4, lambda w: w+8)], (-4, 4, -4, 4), np.concatenate((channel_vals, channel_vals2, channel_vals3)))
+plot_solver([(0, 1, 0.5, 4, IDENTITY), (90, 1, 0.5, 4, lambda w: w+4)], (0, 4, 0, 4), np.append(channel_vals, channel_vals2), None, (2,2))

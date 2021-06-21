@@ -93,7 +93,7 @@ class BaseTrainer(object):
         os.makedirs(os.path.dirname(checkpoint_file), exist_ok=True)
         torch.save(self.state_dict(), checkpoint_file)
 
-    def load_checkpoint(self, checkpoint_id=-1):
+    def load_checkpoint(self, checkpoint_id=-1, transfer=False):
         """Load from checkpoint"""
         assert self.output_dir is not None
 
@@ -104,10 +104,11 @@ class BaseTrainer(object):
             self.load_summaries()
             if checkpoint_id == -1:
                 checkpoint_id = self.summaries.epoch.iloc[-1]
-            self.start_epoch = self.summaries.epoch.max() + 1
+            #self.start_epoch = self.summaries.epoch.max() + 1
+            self.start_epoch = checkpoint_id + 1
             checkpoint_file = self._get_checkpoint_file(checkpoint_id)
             self.logger.info('Loading checkpoint at %s', checkpoint_file)
-            self.load_state_dict(torch.load(checkpoint_file, map_location=self.device))
+            self.load_state_dict(torch.load(checkpoint_file, map_location=self.device), transfer)
         except FileNotFoundError:
             self.logger.info('No summaries 0 file found. Will not load checkoint')
         self.rank = rank
@@ -143,14 +144,15 @@ class BaseTrainer(object):
         """Virtual method to update learning rate"""
         raise NotImplementedError
 
-    def train(self, train_data_loader, n_epochs, valid_data_loader=None):
+    def train(self, train_data_loader, n_epochs, valid_data_loader=None, train_sampler=None):
         """Run the model training"""
 
         # Loop over epochs
         if train_data_loader is not None:
             for i in range(self.start_epoch, n_epochs):
                 utils.distributed.try_barrier()
-
+                if train_sampler is not None:
+                    train_sampler.set_epoch(i)
                 self.logger.info('Epoch %i', i)
                 summary = dict(epoch=i)
 

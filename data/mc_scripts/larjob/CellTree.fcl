@@ -1,0 +1,30 @@
+BEGIN_PROLOG
+
+standard_celltree:
+{
+  module_type     : "CellTree"
+
+  saveRaw         : true
+  saveCalib       : false
+  saveOpHit	  : false
+  saveOpFlash     : true
+  saveSimChannel  : true
+  saveTrigger     : true
+  saveMC          : true
+  saveJSON        : true
+  nRawSamples     : 9600
+  RawDigitLabel   : "daq"
+  CalibLabel      : "caldata"
+  OpHitLabel      : "ophit"
+  OpFlashLabel    : "opflash"
+  TriggerLabel    : "daq"
+  SpacePointLabels: ["reco3d"]
+  SimChannelLabel : "largeant"
+  SimEnergyDepositLabel  : "largeant:TPCActive"
+  mcOption        : "all"
+  opMultPEThresh  : 5
+  saveMCTrackPoints : true
+  outFile           : "celltree.root"
+}
+
+END_PROLOG

@@ -1,22 +1,23 @@
 trainer: basic 
-output_dir: $SCRATCH/mlreco_cell/singleElectronHit_ghost3D-164
+output_dir: $SCRATCH/mlreco_cell/singleE-BeamCosmic-tpc1_ghost3D-164-lr0.01
 
-store_inference: 
-    outdir: inf_train
+store_inference: True
 
 data:
     name: sparse
-    data_path: $SCRATCH/larsim/reco_1GeV_ElectronHit_xy
-    inference_i: [1, 3]
+    data_path: $SCRATCH/larsim/protoDUNE_xy
+    inference_i: [9, 10]
     batch_size: 1 
     threshold: 0.001
 
 model:
     name: cellnet_binary
+    #spatial_size: [2048, 2048, 1024]
     spatial_size: [1024, 1024, 512]
     nChannels: 16
     nStrides: 4
     n_2D: 0
+    conv_kernel: 3
     downsample_t: [2, 2]
 
 loss: 
@@ -27,5 +28,6 @@ optimizer:
     lr: 0.001
 train:
     n_epochs: 1000
+    start_epoch: 24
 metrics:
     acc: BinAccuracy

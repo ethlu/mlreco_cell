@@ -31,8 +31,8 @@ def parse_args():
             help='Specifying number of ranks per node')
     add_arg('--rank-gpu', action='store_true',
             help='Choose GPU according to local rank')
-    add_arg('--resume', action='store_true',
-            help='Resume training from last checkpoint')
+    add_arg('--resume', nargs='?', type=int, const=-1, 
+            help='Resume training from last (or specified) checkpoint')
     add_arg('-v', '--verbose', action='store_true',
             help='Enable verbose logging')
     return parser.parse_args()
@@ -59,7 +59,7 @@ def main():
         configs_dir = output_dir+'/configs/'
         os.makedirs(configs_dir, exist_ok=True)
         if not args.verbose and rank==0:
-            configs_i = [int(f[:-5]) for f in os.listdir(configs_dir)]
+            configs_i = [int(f[:-5]) for f in os.listdir(configs_dir) if f[:-5].isdigit()]
             if not configs_i: config_i = 0
             else: config_i = max(configs_i)+1
             shutil.copy(args.config, configs_dir+'%d.yaml'%(config_i))
@@ -75,7 +75,7 @@ def main():
 
     # Load the datasets
     distributed = args.distributed_backend is not None
-    train_data_loader, valid_data_loader = get_data_loaders(
+    train_data_loader, valid_data_loader, train_sampler = get_data_loaders(
         distributed=distributed, **config['data'])
 
     # Load the trainer
@@ -93,12 +93,15 @@ def main():
     trainer.build(config)
 
     # Resume from checkpoint
-    if args.resume:
-        trainer.load_checkpoint()
+    if args.resume is not None:
+        if 'start_epoch' in config['train']:
+            args.resume = config['train'].pop('start_epoch')
+        trainer.load_checkpoint(args.resume, config['train'].pop('transfer', False))
 
     # Run the training
     summary = trainer.train(train_data_loader=train_data_loader,
                             valid_data_loader=valid_data_loader,
+                            train_sampler=train_sampler,
                             **config['train'])
 
     # Print some conclusions

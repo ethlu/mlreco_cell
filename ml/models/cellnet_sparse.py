@@ -1,47 +1,35 @@
 import torch
 import sparseconvnet as scn
 
-class SparseCellNet(torch.nn.Module):
-    def __init__(self, spatial_size, nChannels, nStrides, n_2D, reps=2, downsample=[2, 2], downsample_t=[4, 4]):
-        super(SparseCellNet, self).__init__()
-        dimension = 3
-        nInputFeatures = 3
-        nOutputFeatures = 1
-        nPlanes = [i*nChannels for i in range(1, nStrides+1)]  # UNet number of features per level
-        self.sparseModel = scn.Sequential().add(
-           scn.InputLayer(dimension, spatial_size, mode=3)).add(
-           scn.SubmanifoldConvolution(# Kernel size 3, no bias
-               dimension, 
-               nInputFeatures, 
-               nChannels, 
-               [1, 3, 3] if n_2D else 3,
-               False)).add( 
-           UResNet(nPlanes, n_2D, reps, downsample, downsample_t)).add(  # downsample = [filter size, filter stride]
-           scn.OutputLayer(dimension))
-        self.linear = torch.nn.Linear(nChannels, nOutputFeatures)
-
-    def forward(self, point_cloud):
-        """
-        point_cloud is a list of length batch size = 1
-        point_cloud[0] has 3 coordinates + batch index + features
-        """
-        point_cloud, = point_cloud
-        coords = point_cloud[:, :4].long()
-        features = point_cloud[:, 4:].float()
-        x = self.sparseModel((coords, features))
-        x = self.linear(x)
-        return x.unsqueeze(0)
-
-def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness=0, n_input_planes=-1):
+def SparseCellNet(spatial_size, nChannels, nStrides, n_2D, nInputFeatures=3, 
+            reps=2, conv_kernel=3, downsample=[2, 2], downsample_t=[4, 4], momentum=0.99):
     dimension = 3
+    nPlanes = [i*nChannels for i in range(1, nStrides+1)]  # UNet number of features per level
+    return scn.Sequential().add(
+       scn.InputLayer(dimension, spatial_size, mode=3)).add(
+       scn.SubmanifoldConvolution(
+           dimension, 
+           nInputFeatures, 
+           nChannels, 
+           [1, conv_kernel, conv_kernel] if n_2D else conv_kernel,
+           False)).add( 
+       UResNet(nPlanes, n_2D, reps, conv_kernel, downsample, downsample_t, momentum)).add(  # downsample = [filter size, filter stride]
+       scn.BatchNormReLU(nChannels, momentum=momentum)).add( 
+       scn.OutputLayer(dimension))
+
+def UResNet(nPlanes, n_2D, reps, 
+        conv_kernel=3, downsample=[2,2], downsample_t=[4,4], 
+        momentum=0.99, leakiness=0, n_input_planes=-1):
+    dimension = 3
+    eps = 1e-4
     def block(m, a, b, is2D): #ResNet style blocks
-        kernel_size = [1, 3, 3] if is2D else 3 
+        kernel_size = [1, conv_kernel, conv_kernel] if is2D else conv_kernel 
         m.add(scn.ConcatTable()
               .add(scn.Identity() if a == b else scn.NetworkInNetwork(a, b, False))
               .add(scn.Sequential()
-                .add(scn.BatchNormLeakyReLU(a,leakiness=leakiness))
+                .add(scn.BatchNormLeakyReLU(a, eps, momentum, leakiness))
                 .add(scn.SubmanifoldConvolution(dimension, a, b, kernel_size, False))
-                .add(scn.BatchNormLeakyReLU(b,leakiness=leakiness))
+                .add(scn.BatchNormLeakyReLU(b, eps, momentum, leakiness))
                 .add(scn.SubmanifoldConvolution(dimension, b, b, kernel_size, False)))
          ).add(scn.AddTable())
     def U(nPlanes, n_2D, n_input_planes=-1): #Recursive function
@@ -57,11 +45,11 @@ def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness
                 scn.ConcatTable().add(
                     scn.Identity()).add(
                     scn.Sequential().add(
-                        scn.BatchNormLeakyReLU(nPlanes[0],leakiness=leakiness)).add(
+                        scn.BatchNormLeakyReLU(nPlanes[0], eps, momentum, leakiness)).add(
                         scn.Convolution(dimension, nPlanes[0], nPlanes[1],
                             down_conv_kernel, down_conv_stride, False)).add(
                         U(nPlanes[1:], n_2D-1)).add(
-                        scn.BatchNormLeakyReLU(nPlanes[1],leakiness=leakiness)).add(
+                        scn.BatchNormLeakyReLU(nPlanes[1], eps, momentum, leakiness)).add(
                         scn.Deconvolution(dimension, nPlanes[1], nPlanes[0],
                             down_conv_kernel, down_conv_stride, False))))
             m.add(scn.JoinTable())
@@ -71,9 +59,3 @@ def UResNet(nPlanes, n_2D, reps, downsample=[2,2], downsample_t=[4,4], leakiness
     m = U(nPlanes, n_2D, n_input_planes)
     return m
 
-def build_model(**kwargs):
-    return SparseCellNet(**kwargs)
-
-if __name__ == "__main__":
-    net = SparseCellNet(128, 2, 3, 2)
-    print(net(torch.tensor([[[1, 2, 3, 1, 1, 2, 3]]])))

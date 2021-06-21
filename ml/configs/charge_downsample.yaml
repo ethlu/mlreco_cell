@@ -1,0 +1,36 @@
+trainer: basic 
+output_dir: $SCRATCH/mlreco_cell/singleE-depoElec_charge-164-MSE555-lr0.01
+
+store_inference:
+    outdir: inf_train
+    everyNepoch: 1
+    everyNsample: 1
+
+data:
+    name: sparse
+    data_path: $SCRATCH/larsim/reco_1GeV_Electron-depoElec_xy
+    #train_i: [701, 950]
+    #train_i: [701, 800]
+    #inference_i: [951, 970]
+    inference_i: [701, 701]
+    full_y: true
+    batch_size: 1 
+model:
+    name: cellnet_charge
+    spatial_size: [1024, 1024, 512]
+    nChannels: 16
+    nStrides: 4
+    n_2D: 0
+    downsample_t: [2, 2]
+    freeze: false
+    nHiddenLayers: 2
+loss: 
+    name: DownsampleMSELoss 
+    downsample: [5, 5, 5]
+
+optimizer:
+    name: Adam
+    lr: 0.01
+train:
+    n_epochs: 34
+    transfer: true

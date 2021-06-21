@@ -1,13 +1,13 @@
 import os, sys
 import shutil
 import numpy as np
+import re
 
-EVENT_TYPES = ["Mu", "Electron", "Pion"]
-PRODUCT_TYPES = ["root", "energy", "wire", "hit", "xy", "pixel"]
-FILE_REGEX = "(%s).(\d+).(%s)" %("|".join(EVENT_TYPES), "|".join(PRODUCT_TYPES))
+EVENT_TYPES = ["Mu", "Electron", "Pion", "BeamCosmic", "protoDUNE"]
+PRODUCT_TYPES = ["root", "energy", "depo", "depoElectron", "wire", "hit", "xy", "pixel", "yinf", "mcbeamcosmic", "mcparticle", "spacepoint", "wirecell", "calo", "calonosce"]
+FILE_REGEX = "(%s).(\d+).(%s)(?:\W|$)" %("|".join(EVENT_TYPES), "|".join(PRODUCT_TYPES))
 
 def file_info(filename):
-    import re
     x = re.findall(FILE_REGEX, filename)
     if len(x) != 1:
         print("bad file name ", filename)
@@ -16,13 +16,26 @@ def file_info(filename):
     return evt, int(index), prod
 
 def inf_file_info(filename):
-    import re
     x = re.findall("epoch(\d+).(.+).np.", filename)
     if len(x) != 1:
         print("bad file name ", filename)
         return None
     epoch, f = x[0]
     return int(epoch), f
+
+def tpc_info(filename):
+    x = re.findall("TPC(\d+)[^*]", filename)
+    if len(x) != 1:
+        print("bad file name ", filename)
+        return None
+    return int(x[0]),
+
+def batch_info(filename):
+    x = re.findall("batch(\d+)", filename)
+    if len(x) != 1:
+        print("bad file name ", filename)
+        return None
+    return int(x[0]),
 
 def time_info(filename):
     return os.stat(filename)[-2],

@@ -1,5 +1,6 @@
 import numpy as np
 from tiling.square import * 
+from scipy.sparse import csc_matrix, linalg
 from numba import jit, prange
 from numba.typed import List, Dict
 from numba.core import types
@@ -83,7 +84,7 @@ class Geom:
         return Geom(pix_ol, chan_assoc)
 
 class Pixelator:
-    ACTIVE_THRESHOLD = 0
+    ACTIVE_THRESHOLD = 1e-3
     def __init__(self, geom, active_none = True, sparse_output = True):
         self.geom = geom
         self.active_none = active_none
@@ -249,18 +250,58 @@ class Pixelator:
                 batch_output[event_i][slic_i_start] = point_cloud
         return batch_output
 
+class Solver:
+    """Use regression to solve for pixel values. See parse_channels.py"""
+    def __init__(self, geom, downsample=(1, 1), regression="OLS"):
+        self.regress = regression
+        self.num_x = int(np.ceil(geom.num_x/downsample[0]))
+        self.num_y = int(np.ceil(geom.num_y/downsample[1]))
+        data, indices, indptr = [], [], [0]
+        pixel_area = downsample[0]*downsample[1]
+        for x in range(0, geom.num_x, downsample[0]):
+            for y in range(0, geom.num_y, downsample[1]):
+                overlaps={}
+                for i in range(downsample[0]):
+                    for j in range(downsample[1]):
+                        if x+i >= geom.num_x or y+j >= geom.num_y: continue
+                        for chan, _, area in geom.pix_ol[x+i, y+j]:
+                            if chan == Geom.NONE: continue
+                            if chan not in overlaps: overlaps[chan]=area
+                            else: overlaps[chan]+=area
+                for chan, area in overlaps.items():
+                    indices.append(chan)
+                    data.append(area/pixel_area)
+                indptr.append(len(data))
+        self.A = csc_matrix((data, indices, indptr), shape=(geom.num_chans, self.num_x*self.num_y))
+
+    def solve(self, channel_vals, pixels):
+        from sklearn.linear_model import Lasso
+        pixels = np.asarray(pixels)
+        A = self.A[:, pixels[:, 0]*self.num_y + pixels[:, 1]]
+        if self.regress=="OLS":
+            x, istop, itn, normr = linalg.lsmr(A, channel_vals)[:4]
+            #print(x, istop, itn, normr)
+            return x
+        if self.regress=="Lasso":
+            lasso = Lasso(alpha=1e-4, positive=True)
+            lasso.fit(A, channel_vals)
+            #print(lasso.coef_.shape)
+            return lasso.coef_
+    __call__ = solve
+
+"""
 if __name__ == "__main__":
     import timeit, time
     from geom.pdsp import *
     t0 = time.time()
     N = 200
-    geo = Geom.create([(45, 2, 0.0001, N//2, IDENTITY), (90, 2, 0, N//2, lambda w: w+N//2)], (0, N, 0, N), N)
+    #geo = Geom.create([(45, 2, 0.0001, N//2, IDENTITY), (90, 2, 0, N//2, lambda w: w+N//2)], (0, N, 0, N), N)
     #geo.save()
     #geo = Geom.load()
-    #geo = make_APA_geom(1) 
+    #geo = make_APA_geom_larsoft_face1()
     #geo.save("geom_pdsp_face1")
 
-    #geo = get_APA_geom(2) 
+    geo = get_APA_geom(2) 
     print("geom: ", sys.getsizeof(geo))
     print("pixel overlap: ", sys.getsizeof(geo.pix_ol))
     print("chan assoc: ", sys.getsizeof(geo.chan_assoc))
@@ -271,7 +312,7 @@ if __name__ == "__main__":
     #print(timeit.timeit('pix(np.random.randint(0, 5, N))', globals=globals(), number=500)/500)
     pix = pix.to_numba()
     t2 = time.time()
-    #print("to numba: ", t2-t1)
+    print("to numba: ", t2-t1)
     #pixelate_numba(*pix.to_numba(), np.random.randint(0, 5, N))
 
     #print("numba avg: ")
@@ -303,9 +344,8 @@ if __name__ == "__main__":
     with open("log.txt", 'a') as f:
         f.write("\nsparse time "+ str(t/10/batch_size/10))
     #print(timeit.timeit('sparse = deepcopy(sparse); pix(sparse)', globals=globals(), number=10)/500)
-    """
     print(timeit.timeit("sparse = [1]*(1*N//10) + [0]*(9*N//10); \
                 np.random.shuffle(sparse); \
                 pix(np.tile(sparse, (1000, 1)))", globals=globals(), number=5)/500)
-                """
+"""
 

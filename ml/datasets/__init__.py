@@ -38,4 +38,4 @@ def get_data_loaders(name, batch_size, distributed=False,
                                sampler=valid_sampler,
                                **loader_args)
                     if valid_dataset is not None else None)
-    return train_loader, valid_loader
+    return train_loader, valid_loader, train_sampler

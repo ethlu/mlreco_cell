@@ -1,0 +1,34 @@
+trainer: basic 
+output_dir: $SCRATCH/mlreco_cell/singleE-BeamCosmic-depoElec-tpc1_charge-164-lr0.01
+
+store_inference:
+#outdir: inf_pion
+    everyNepoch: 1
+    everyNsample: 5
+
+data:
+    name: sparse
+    data_path: [$SCRATCH/larsim/reco_1GeV_Electron-depoElec_xy, $SCRATCH/larsim/reco_1GeV_BeamCosmic-depoElec_xy]
+    train_i: [[701, 850], [101, 500]]
+    #train_i: [[701, 900], null]
+    inference_i: [[951, 1000], [0,100]]
+    tpcs: [null, [1]]
+    batch_size: 1 
+model:
+    name: cellnet_charge
+    spatial_size: [1024, 1024, 512]
+    nChannels: 16
+    nStrides: 4
+    n_2D: 0
+    downsample_t: [2, 2]
+    freeze: false
+    nHiddenLayers: 2
+loss: 
+    name: MSELoss 
+
+optimizer:
+    name: Adam
+    lr: 0.01
+train:
+    n_epochs: 38
+    transfer: false

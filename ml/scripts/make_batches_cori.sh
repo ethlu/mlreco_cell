@@ -5,7 +5,7 @@
 #SBATCH -C haswell
 #SBATCH -q regular 
 #SBATCH -J xy
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 
 #OpenMP settings:
 export OMP_NUM_THREADS=64
@@ -15,4 +15,6 @@ export OMP_NUM_THREADS=64
 
 #run the application:
 #srun -n 1 -c 64 --cpu_bind=cores scripts/make_batches.sh -i $SCRATCH/larsim/reco_1GeV_parsed/ -o reco_1GeV_xy -n 64
-srun scripts/make_batches.sh -i $SCRATCH/larsim/reco_1GeV_Electron_parsed -o reco_1GeV_ElectronWire_xy -n $OMP_NUM_THREADS
+srun -l scripts/make_batches.sh -i $SCRATCH/larsim/reco_1GeV_Mu_parsed/ -o reco_1GeV_MuWire_xy -n $OMP_NUM_THREADS -t 5
+
+#6-7 min per Electron wire file (100 evts)
